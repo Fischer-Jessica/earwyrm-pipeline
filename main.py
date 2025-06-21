@@ -27,20 +27,34 @@ def epub_to_text(epub_path):
 
 # Split text into chunks of max `max_length` characters, preserving sentence boundaries
 def split_text(text, max_length=300):
-    sentences = re.split(r'(?<=[.!?]) +', text) # Split on sentence endings
+    sentences = re.split(r'(?<=[.!?]) +', text)
     chunks = []
     current_chunk = ""
 
     for sentence in sentences:
-        if len(current_chunk) + len(sentence) + 1 <= max_length:
-            # Add sentence to current chunk if it fits within the max length
-            current_chunk += " " + sentence if current_chunk else sentence
+        sentence = sentence.strip()
+
+        # If the sentence is longer than max_length, split it at the word level
+        if len(sentence) > max_length:
+            words = sentence.split()
+            for word in words:
+                if len(current_chunk) + len(word) + 1 <= max_length:
+                    current_chunk += (" " if current_chunk else "") + word
+                else:
+                    chunks.append(current_chunk)
+                    current_chunk = word
         else:
-            # If current chunk exceeds max length, save it and start a new chunk
-            chunks.append(current_chunk.strip())
-            current_chunk = sentence
+            # If sentence fits in the current chunk, add it
+            if len(current_chunk) + len(sentence) + 1 <= max_length:
+                current_chunk += (" " if current_chunk else "") + sentence
+            else:
+                # Otherwise, save the current chunk and start a new one
+                if current_chunk:
+                    chunks.append(current_chunk)
+                current_chunk = sentence
+
     if current_chunk:
-        chunks.append(current_chunk.strip())
+        chunks.append(current_chunk)
 
     return chunks
 
