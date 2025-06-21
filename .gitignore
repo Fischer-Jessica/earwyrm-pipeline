@@ -1,11 +1,14 @@
-# Virtual environment
+# Virtual environment (local developer environment)
 .venv/
 
-# IDE / Editor specific files
+# IDE / Editor specific files (local developer config)
 .idea/
 
-# Output directories
+# Environment variables / secrets (local config, never commit real secrets)
+.env
+
+# Output directories (generated files, not source)
 output/
 
-# Environment variables / secrets
-.env
+# Picovoice voice model files (downloaded models, too large or licensed)
+models/
