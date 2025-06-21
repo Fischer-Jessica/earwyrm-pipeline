@@ -65,7 +65,7 @@ def clean_text(text):
     return text
 
 # Convert the cleaned text into audio files using Orca, then combine to one MP3 file
-def text_to_wav(language, text):
+def text_to_wav(language, text, mp3_filename):
     model_folder = os.getenv("MODEL_PATH") # Path to Orca model files
     output_dir = os.getenv("OUTPUT_PATH") # Output directory for audio files
     os.makedirs(output_dir, exist_ok=True)
@@ -94,7 +94,7 @@ def text_to_wav(language, text):
         chunk_audio = AudioSegment.from_wav(wav_path)
         combined += chunk_audio
 
-    mp3_output_path = os.path.join(output_dir, "combined_output.mp3")
+    mp3_output_path = os.path.join(output_dir, mp3_filename)
     combined.export(mp3_output_path, format="mp3")
     print(f"Exported combined audio to {mp3_output_path}")
 
@@ -110,8 +110,12 @@ def main():
 
     args = parser.parse_args()
 
+    # Extract base filename for the output file
+    base_name = os.path.splitext(os.path.basename(args.epub_path))[0]
+    mp3_filename = base_name + ".mp3"
+
     text = epub_to_text(args.epub_path)
-    text_to_wav(args.language, text)
+    text_to_wav(args.language, text, mp3_filename)
 
 # Run main() if script is called directly
 if __name__ == "__main__":
