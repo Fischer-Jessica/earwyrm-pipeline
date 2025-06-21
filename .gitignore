@@ -1,0 +1,11 @@
+# Virtual environment
+.venv/
+
+# IDE / Editor specific files
+.idea/
+
+# Output directories
+output/
+
+# Environment variables / secrets
+.env
