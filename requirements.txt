@@ -1,0 +1,7 @@
+pvorca~=1.2.0
+dotenv~=0.9.9
+python-dotenv~=1.1.0
+pydub~=0.25.1
+EbookLib~=0.19
+bs4~=0.0.2
+beautifulsoup4~=4.13.4
