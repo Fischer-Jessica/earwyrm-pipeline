@@ -1,5 +1,5 @@
 # Earwyrm Pipeline
-**Current version:** `1.0.0`
+**Current version:** `1.1.0`
 
 ---
 
@@ -19,7 +19,8 @@ This script was developed and tested on Ubuntu 24.04, using Python 3.12 and the 
 2. **Get your access key**
    - After logging in, navigate to the [Developer Console](https://console.picovoice.ai/) and copy your access key.
 3. **Download Orca TTS model files**
-   - Download the required model files (`orca_params_de_male.pv`, `orca_params_en_male.pv`) from the [Picovoice Orca GitHub repository](https://github.com/Picovoice/orca/tree/main/lib/common).
+   - Download the required model files for English and German (male and female) from the [Picovoice Orca GitHub repository](https://github.com/Picovoice/orca/tree/main/lib/common).
+     - `orca_params_de_male.pv`, `orca_params_de_female.pv`, `orca_params_en_male.pv`, `orca_params_en_female.pv`
    - Place these files in a directory of your choice.
 4. **Download the Earwyrm Pipeline script**
    - Clone or download this repository to your local machine.
@@ -44,16 +45,17 @@ This script was developed and tested on Ubuntu 24.04, using Python 3.12 and the 
 ## Usage
 Run the script with the following command:
 ```bash
-python main.py <path_to_your_epub_file> <language_code>
+python main.py <path_to_your_epub_file> <language_code> <voice_type>
 ```
 - Replace `<path_to_your_epub_file>` with the path to the EPUB file.
 - Replace `<language_code>` with the desired language code (`en` for English, `de` for German).
+- Replace `<voice_type>` with the desired voice type (`male` for a male voice, `female` for a female voice).
 
 ## Example
 ```bash
-python main.py ~/Documents/Eragon.epub de
+python main.py ~/Documents/Eragon.epub de male
 ```
-This command will process the `Eragon.epub` file and read it aloud in German, saving the result as a single MP3 file in the specified output directory as `Eragon.mp3`.
+This command will process the `Eragon.epub` file and read it aloud in German, using a male voice, saving the result as a single MP3 file in the specified output directory as `Eragon.mp3`.
 
 ---
 
@@ -64,6 +66,8 @@ This command will process the `Eragon.epub` file and read it aloud in German, sa
 ---
 
 ## Changelog
+### [1.1.0] - 22-06-2025
+- Adds support for choosing between male and female voices (selectable via command line argument).
 ### [1.0.0] - 21-06-2025
 - Initial release of the Earwyrm Pipeline: convert EPUB to MP3 using Picovoice Orca TTS.
 - Supports English and German (male voices only).

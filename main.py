@@ -65,16 +65,22 @@ def clean_text(text):
     return text
 
 # Convert the cleaned text into audio files using Orca, then combine to one MP3 file
-def text_to_wav(language, text, mp3_filename):
+def text_to_wav(language, gender, text, mp3_filename):
     model_folder = os.getenv("MODEL_PATH") # Path to Orca model files
     output_dir = os.getenv("OUTPUT_PATH") # Output directory for audio files
     os.makedirs(output_dir, exist_ok=True)
 
-    # Select appropriate model based on language
+    # Select appropriate model based on language and gender
     if language == "de":
-        model_path = os.path.join(model_folder, "orca_params_de_male.pv")
+        if gender == "male":
+            model_path = os.path.join(model_folder, "orca_params_de_male.pv")
+        else:
+            model_path = os.path.join(model_folder, "orca_params_de_female.pv")
     else:
-        model_path = os.path.join(model_folder, "orca_params_en_male.pv")
+        if gender == "male":
+            model_path = os.path.join(model_folder, "orca_params_en_male.pv")
+        else:
+            model_path = os.path.join(model_folder, "orca_params_en_female.pv")
 
     cleaned_text = clean_text(text)
     chunks = split_text(cleaned_text, max_length=300)
@@ -107,6 +113,7 @@ def main():
     parser = argparse.ArgumentParser(description="Convert EPUB to TTS audio")
     parser.add_argument("epub_path", help="Path to the EPUB file")
     parser.add_argument("language", choices=["de", "en"], help="Language code (de or en)")
+    parser.add_argument("gender", choices=["male", "female"], help="Gender code (male or female)")
 
     args = parser.parse_args()
 
@@ -115,7 +122,7 @@ def main():
     mp3_filename = base_name + ".mp3"
 
     text = epub_to_text(args.epub_path)
-    text_to_wav(args.language, text, mp3_filename)
+    text_to_wav(args.language, args.gender, text, mp3_filename)
 
 # Run main() if script is called directly
 if __name__ == "__main__":
