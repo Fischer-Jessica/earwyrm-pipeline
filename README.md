@@ -1,5 +1,5 @@
 # Earwyrm Pipeline
-**Current version:** `1.1.0`
+**Current version:** `1.1.1`
 
 ---
 
@@ -62,10 +62,17 @@ This command will process the `Eragon.epub` file and read it aloud in German, us
 ## Notes
 - Intermediate `.wav` files are created in the output directory during processing but will be deleted after the MP3 file is generated.
 - The output file will be named after the EPUB file, with the `.mp3` extension.
+- To check the length of the generated MP3 file, you can use the `ffprobe` command:
+   ```bash
+   ffprobe -i <filename>.mp3 -show_entries format=duration -v quiet -of csv="p=0" | awk '{printf "%02d:%02d:%02d\n", $1/3600, ($1%3600)/60, $1%60}'
+   ```
+   - Replace `<filename>` with the name of your generated MP3 file.
 
 ---
 
 ## Changelog
+### [1.1.1] - 22-06-2025
+- Adds a note about the `ffprobe` command to check the length of the generated MP3 file.
 ### [1.1.0] - 22-06-2025
 - Adds support for choosing between male and female voices (selectable via command line argument).
 ### [1.0.0] - 21-06-2025
