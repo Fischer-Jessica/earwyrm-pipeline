@@ -1,5 +1,5 @@
 # Earwyrm Pipeline
-**Current version:** `1.1.2`
+**Current version:** `1.1.3`
 
 ---
 
@@ -71,13 +71,25 @@ This command will process the `Eragon.epub` file and read it aloud in German, us
 ---
 
 ## Changelog
-### [1.1.2] - 22-06-2025
-- Fix that '.' is read aloud (see issue #1) by making every sentence an individual chunk.
+### [1.1.3] - 27-06-2025
+- standardize quotation marks while cleaning input text
+- adapt regex per language to exclude invalid symbols
+- ensure space after sentence-ending punctuation to prevent issues with the Picovoice Orca TTS engine
+  - root cause of the bug reported in issue #1
+- change max_length of chunks to enforce single sentence chunks to avoid weird pauses in sentences
+- splitting text into individual sentences now works as expected and introduces natural pauses, addressing issue #2
+- correct release date for `1.1.2` in the changelog
+
+### [1.1.2] - 27-06-2025
+- lay foundation to split text into individual sentence chunks
+
 ### [1.1.1] - 22-06-2025
-- Adds a note about the `ffprobe` command to check the length of the generated MP3 file.
+- Add note about the `ffprobe` command to check the length of generated MP3 file
+
 ### [1.1.0] - 22-06-2025
-- Adds support for choosing between male and female voices (selectable via command line argument).
+- add support for choosing between male and female voices (selectable via command line argument)
+
 ### [1.0.0] - 21-06-2025
-- Initial release of the Earwyrm Pipeline: convert EPUB to MP3 using Picovoice Orca TTS.
-- Supports English and German (male voices only).
-- Uses `.env` to configure model path, output path and Picovoice access key.
+- initial release of the Earwyrm Pipeline: convert EPUB to MP3 using Picovoice Orca TTS
+- support English and German (male voices only)
+- use `.env` to configure model path, output path and Picovoice access key

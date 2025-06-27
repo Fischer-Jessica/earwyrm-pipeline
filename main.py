@@ -26,8 +26,8 @@ def epub_to_text(epub_path):
     return '\n'.join(text_parts)
 
 # Split text into chunks of max `max_length` characters, preserving sentence boundaries
-def split_text(text, max_length=300):
-    sentences = re.split(r'(?<=[.!?]) +', text)
+def split_text(text, max_length):
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
     chunks = []
     current_chunk = ""
 
@@ -53,9 +53,19 @@ def split_text(text, max_length=300):
     return chunks
 
 # Clean up the text by replacing special quotes and removing unsupported characters
-def clean_text(text):
-    text = text.replace("«", '"').replace("»", '"')
-    text = re.sub(r"[^a-zA-Z0-9äöüÄÖÜß.,:!?\"' \n\r\t-]", "", text)
+def clean_text(text, language):
+    text = text.replace("«", '"').replace("»", '"') \
+        .replace("„", '"').replace("“", '"') \
+        .replace("‘", "'").replace("’", "'")
+
+    # Ensure there's a space after sentence-ending punctuation
+    text = re.sub(r'([.!?])(?=\w)', r'\1 ', text)
+
+    if language.lower() == 'de':
+        text = re.sub(r"[^a-zA-Z0-9äöüÄÖÜß.,:!?\"' \n-]", "", text)
+    elif language.lower() == 'en':
+        text = re.sub(r"[^a-zA-Z0-9.,:!?\"' \n-]", "", text)
+
     return text
 
 # Convert the cleaned text into audio files using Orca, then combine to one MP3 file
@@ -76,8 +86,8 @@ def text_to_wav(language, gender, text, mp3_filename):
         else:
             model_path = os.path.join(model_folder, "orca_params_en_female.pv")
 
-    cleaned_text = clean_text(text)
-    chunks = split_text(cleaned_text, max_length=300)
+    cleaned_text = clean_text(text, language)
+    chunks = split_text(cleaned_text, max_length=500)
 
     # Convert each chunk to a WAV file using Orca
     for i, chunk in enumerate(chunks):
