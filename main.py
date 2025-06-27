@@ -33,6 +33,8 @@ def split_text(text, max_length=300):
 
     for sentence in sentences:
         sentence = sentence.strip()
+        if not sentence:
+            continue
 
         # If the sentence is longer than max_length, split it at the word level
         if len(sentence) > max_length:
@@ -43,18 +45,10 @@ def split_text(text, max_length=300):
                 else:
                     chunks.append(current_chunk)
                     current_chunk = word
+            if current_chunk:
+                chunks.append(current_chunk)
         else:
-            # If sentence fits in the current chunk, add it
-            if len(current_chunk) + len(sentence) + 1 <= max_length:
-                current_chunk += (" " if current_chunk else "") + sentence
-            else:
-                # Otherwise, save the current chunk and start a new one
-                if current_chunk:
-                    chunks.append(current_chunk)
-                current_chunk = sentence
-
-    if current_chunk:
-        chunks.append(current_chunk)
+            chunks.append(sentence)
 
     return chunks
 

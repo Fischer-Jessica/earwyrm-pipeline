@@ -1,5 +1,5 @@
 # Earwyrm Pipeline
-**Current version:** `1.1.1`
+**Current version:** `1.1.2`
 
 ---
 
@@ -71,6 +71,8 @@ This command will process the `Eragon.epub` file and read it aloud in German, us
 ---
 
 ## Changelog
+### [1.1.2] - 22-06-2025
+- Fix that '.' is read aloud (see issue #1) by making every sentence an individual chunk.
 ### [1.1.1] - 22-06-2025
 - Adds a note about the `ffprobe` command to check the length of the generated MP3 file.
 ### [1.1.0] - 22-06-2025
