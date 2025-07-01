@@ -1,5 +1,5 @@
 # Earwyrm Pipeline
-**Current version:** `1.1.3`
+**Current version:** `1.2.0`
 
 ---
 
@@ -67,10 +67,20 @@ This command will process the `Eragon.epub` file and read it aloud in German, us
    ffprobe -i <filename>.mp3 -show_entries format=duration -v quiet -of csv="p=0" | awk '{printf "%02d:%02d:%02d\n", $1/3600, ($1%3600)/60, $1%60}'
    ```
    - Replace `<filename>` with the name of your generated MP3 file.
+- If you're using a version **prior to** commit [ebce5a1](https://github.com/Fischer-Jessica/earwyrm-pipeline/commit/ebce5a1b7ca439a2a9e0b12b0b4046da7d4158a9), make sure that the `OUTPUT_PATH` in your `.env` file includes the **full filename** (e.g., `output.wav`), as shown in the `.env.example` file from that version.
+  - This is no longer required because the `OUTPUT_PATH` now refers to a **directory**, and the MP3 filename is automatically derived from the EPUB file name.
+- Avoid spaces or special characters in file or folder names as this may lead to unexpected behavior or errors during processing.
 
 ---
 
 ## Changelog
+### [1.2.0] - 01-07-2025
+- remove (') from the list of allowed symbols for German in the regex to prevent issues with the Picovoice Orca TTS engine, as discussed in issue #6
+- add '(' and ')' to the list of allowed symbols in the regex to ensure proper pauses for them in the text, addressing issue #7
+- normalize `language` and `gender` parameters to lowercase to ensure consistent handling of input
+- add note to the README.md clarifying outdated `OUTPUT_PATH` behavior for versions prior to commit [ebce5a1](https://github.com/Fischer-Jessica/earwyrm-pipeline/commit/ebce5a1b7ca439a2a9e0b12b0b4046da7d4158a9)
+- add note to the README.md warning against spaces or special characters in filenames and paths
+
 ### [1.1.3] - 27-06-2025
 - standardize quotation marks while cleaning input text
 - adapt regex per language to exclude invalid symbols

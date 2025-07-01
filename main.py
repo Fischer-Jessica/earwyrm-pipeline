@@ -58,13 +58,15 @@ def clean_text(text, language):
         .replace("„", '"').replace("“", '"') \
         .replace("‘", "'").replace("’", "'")
 
+    if language.lower() == "de":
+        text = re.sub(r"[^a-zA-Z0-9äöüÄÖÜß.,:!?\"()\n\- ]", "", text)
+    elif language.lower() == "en":
+        text = re.sub(r"[^a-zA-Z0-9.,:!?\"'()\n\- ]", "", text)
+
     # Ensure there's a space after sentence-ending punctuation
     text = re.sub(r'([.!?])(?=\w)', r'\1 ', text)
-
-    if language.lower() == 'de':
-        text = re.sub(r"[^a-zA-Z0-9äöüÄÖÜß.,:!?\"' \n-]", "", text)
-    elif language.lower() == 'en':
-        text = re.sub(r"[^a-zA-Z0-9.,:!?\"' \n-]", "", text)
+    # Ensure space before opening parenthesis
+    text = re.sub(r'(?<![\s(])\(', ' (', text)
 
     return text
 
@@ -75,13 +77,13 @@ def text_to_wav(language, gender, text, mp3_filename):
     os.makedirs(output_dir, exist_ok=True)
 
     # Select appropriate model based on language and gender
-    if language == "de":
-        if gender == "male":
+    if language.lower() == "de":
+        if gender.lower() == "male":
             model_path = os.path.join(model_folder, "orca_params_de_male.pv")
         else:
             model_path = os.path.join(model_folder, "orca_params_de_female.pv")
     else:
-        if gender == "male":
+        if gender.lower() == "male":
             model_path = os.path.join(model_folder, "orca_params_en_male.pv")
         else:
             model_path = os.path.join(model_folder, "orca_params_en_female.pv")
