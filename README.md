@@ -1,5 +1,23 @@
-# Earwyrm Pipeline
-**Current version:** `1.2.0`
+<div style="display: flex; align-items: center; gap: 15px;">
+  <img src="./assets/logo.png" alt="Earwyrm Pipeline Logo" width="222" />
+  <div>
+    <h1>Earwyrm Pipeline</h1>
+    <p><strong>Current version:</strong> <code>1.2.1</code></p>
+    <p><strong>Last updated:</strong> <code>03-07-2025</code></p>
+  </div>
+</div>
+
+---
+
+## Table of Contents
+
+- [Description](#description)
+- [Setup Guide](#setup-guide)
+  - [Installation](#installation)
+- [Usage](#usage)
+  - [Example](#example)
+- [Notes](#notes)
+- [Changelog](#changelog)
 
 ---
 
@@ -45,11 +63,11 @@ This script was developed and tested on Ubuntu 24.04, using Python 3.12 and the 
 ## Usage
 Run the script with the following command:
 ```bash
-python main.py <path_to_your_epub_file> <language_code> <voice_type>
+python main.py <epub_path> <language> <gender>
 ```
-- Replace `<path_to_your_epub_file>` with the path to the EPUB file.
-- Replace `<language_code>` with the desired language code (`en` for English, `de` for German).
-- Replace `<voice_type>` with the desired voice type (`male` for a male voice, `female` for a female voice).
+- Replace `<epub_path>` with the path to the EPUB file.
+- Replace `<language>` with the desired language code (`en` for English, `de` for German).
+- Replace `<gender>` with the desired voice type (`male` for a male voice, `female` for a female voice).
 
 ## Example
 ```bash
@@ -74,6 +92,12 @@ This command will process the `Eragon.epub` file and read it aloud in German, us
 ---
 
 ## Changelog
+### [1.2.1] - 03-07-2025
+- add logo as requested in issue #5
+- fix inconsistencies in the changelog
+- update usage example flags in README.md to match actual command line arguments
+- add table of contents to the README.md for easier navigation
+
 ### [1.2.0] - 01-07-2025
 - remove (') from the list of allowed symbols for German in the regex to prevent issues with the Picovoice Orca TTS engine, as discussed in issue #6
 - add '(' and ')' to the list of allowed symbols in the regex to ensure proper pauses for them in the text, addressing issue #7
@@ -88,13 +112,13 @@ This command will process the `Eragon.epub` file and read it aloud in German, us
   - root cause of the bug reported in issue #1
 - change max_length of chunks to enforce single sentence chunks to avoid weird pauses in sentences
 - splitting text into individual sentences now works as expected and introduces natural pauses, addressing issue #2
-- correct release date for `1.1.2` in the changelog
+- set correct release date for `1.1.2` in the changelog
 
 ### [1.1.2] - 27-06-2025
 - lay foundation to split text into individual sentence chunks
 
 ### [1.1.1] - 22-06-2025
-- Add note about the `ffprobe` command to check the length of generated MP3 file
+- add note about the `ffprobe` command to check the length of generated MP3 file
 
 ### [1.1.0] - 22-06-2025
 - add support for choosing between male and female voices (selectable via command line argument)
