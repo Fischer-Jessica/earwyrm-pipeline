@@ -1,11 +1,13 @@
-<div style="display: flex; align-items: center; gap: 15px;">
-  <img src="./assets/logo.png" alt="Earwyrm Pipeline Logo" width="222" />
-  <div>
-    <h1>Earwyrm Pipeline</h1>
-    <p><strong>Current version:</strong> <code>1.2.1</code></p>
-    <p><strong>Last updated:</strong> <code>03-07-2025</code></p>
-  </div>
-</div>
+<p align="center">
+  <img src="./assets/logo.png" alt="Earwyrm Pipeline Logo" width="200" />
+</p>
+
+<h1 align="center">Earwyrm Pipeline</h1>
+
+<p align="center">
+  <strong>Current version:</strong> <code>1.2.2</code> &nbsp;|&nbsp;
+  <strong>Last updated:</strong> <code>03-07-2025</code>
+</p>
 
 ---
 
@@ -92,6 +94,9 @@ This command will process the `Eragon.epub` file and read it aloud in German, us
 ---
 
 ## Changelog
+### [1.2.2] - 03-07-2025
+- fix logo display issues caused by GitHub’s Markdown renderer limitations
+
 ### [1.2.1] - 03-07-2025
 - add logo as requested in issue #5
 - fix inconsistencies in the changelog
