@@ -5,8 +5,8 @@
 <h1 align="center">Earwyrm Pipeline</h1>
 
 <p align="center">
-  <strong>Current version:</strong> <code>1.2.3</code> &nbsp;|&nbsp;
-  <strong>Last updated:</strong> <code>04-07-2025</code>
+  <strong>Current version:</strong> <code>1.3.0</code> &nbsp;|&nbsp;
+  <strong>Last updated:</strong> <code>17-07-2025</code>
 </p>
 
 ---
@@ -19,7 +19,7 @@
 - [Usage](#usage)
   - [Example](#example)
 - [Notes](#notes)
-- [Changelog](CHANGELOG.md)
+- [Changelog](CHANGELOG.md) - stored in a separate file for better organization and readability
 
 ---
 
