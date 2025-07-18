@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="./assets/logo.png" alt="Earwyrm Pipeline Logo" width="200" />
+  <img src="./assets/logo_earwyrm-pipeline.png" alt="Earwyrm Pipeline Logo" width="200" />
 </p>
 
 <h1 align="center">Earwyrm Pipeline</h1>
 
 <p align="center">
-  <strong>Current version:</strong> <code>1.3.0</code> &nbsp;|&nbsp;
-  <strong>Last updated:</strong> <code>17-07-2025</code>
+  <strong>Current version:</strong> <code>1.3.1</code> &nbsp;|&nbsp;
+  <strong>Last updated:</strong> <code>18-07-2025</code>
 </p>
 
 ---
