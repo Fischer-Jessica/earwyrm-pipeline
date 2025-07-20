@@ -3,6 +3,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 20-07-2025
+### Added
+- introduced colored `print()` output to improve visibility and readability in the console
+- when the application is stopped manually and restarted already generated WAV files are reused instead of being regenerated
+
+### Changed
+- enhanced progress messages for clarity and consistency across the application
+- progress counters now start at 1 instead of 0 for better user-friendliness
+- clarify WAV file deletion conditions in README.md
+
+### Fixed
+- corrected the total chunk count display in messages like "Saved chunk x of y for chapter i"
+- fixed a bug that caused duplicated text chunks during the EPUB parsing phase, resulting in repeated audio output
+
 ## [1.3.1] - 18-07-2025
 ### Changed
 - enhance layer structure of the logo file for better maintainability and export clarity

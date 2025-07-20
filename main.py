@@ -6,6 +6,7 @@ import pvorca   # Picovoice Orca TTS engine for speech synthesis
 from pydub import AudioSegment   # For audio processing and combining WAV files into MP3
 
 from ebooklib import epub, ITEM_DOCUMENT   # To read EPUB files and extract document parts
+from bs4.element import NavigableString  # Represents text nodes within the HTML parse tree
 from bs4 import BeautifulSoup   # To parse and clean up HTML content from EPUB
 from bs4 import Tag   # For handling HTML tags in BeautifulSoup
 import re   # Regular expressions for text processing
@@ -18,39 +19,43 @@ def epub_to_chapters(epub_path):
 
     :param epub_path: Path to the EPUB file.
 
-    :return: A list of chapters, each containing a title and body text.
+    :return: List of chapters, each as a string "Title\nContent".
     """
     ebook = epub.read_epub(epub_path)
     chapters = []
 
     for doc_item in ebook.get_items_of_type(ITEM_DOCUMENT):
         soup = BeautifulSoup(doc_item.get_content(), 'html.parser')
-        elements = list(soup.body.descendants)
+        body = soup.body
+        if not body:
+            continue
 
         current_title = None
         current_content = []
 
-        for el in elements:
+        for el in body.descendants:
             if isinstance(el, Tag) and el.name in ['h1', 'h2']:
                 # Start new chapter, save previous if exists
                 if current_title or current_content:
                     full_text = f"{current_title}\n{''.join(current_content).strip()}"
+                    # Filter out None-Strings and empty rows
+                    full_text = '\n'.join([line for line in full_text.splitlines() if line.strip() and line.strip().lower() != 'none'])
                     chapters.append(full_text)
                     current_content = []
 
                 current_title = el.get_text(strip=True)
 
-            elif current_title:
+            elif isinstance(el, NavigableString):
                 # Collect chapter content, skip headings
-                if isinstance(el, str):
-                    current_content.append(el)
-                elif isinstance(el, Tag):
-                    if el.name not in ['h1', 'h2']:
-                        current_content.append(' '.join(el.stripped_strings) + '\n')
+                if el.parent and el.parent.name not in ['h1', 'h2']:
+                    text = el.strip()
+                    if text and text.lower() != 'none':
+                        current_content.append(text + "\n")
 
         # Save last chapter
         if current_title or current_content:
             full_text = f"{current_title}\n{''.join(current_content).strip()}"
+            full_text = '\n'.join([line for line in full_text.splitlines() if line.strip() and line.strip().lower() != 'none'])
             chapters.append(full_text)
 
     return chapters
@@ -133,40 +138,64 @@ def chapters_to_mp3(language, gender, chapters, base_name):
     # Select appropriate Orca model file based on language and gender
     model_path = os.path.join(model_folder, f'orca_params_{language.lower()}_{gender.lower()}.pv')
 
-    chunk_counter = 0
+    global_chunk_counter = 1
     chapter_end_chunk_indices = []
 
     try:
         for chapter_index, chapter in enumerate(chapters, start=1):
             cleaned_chapter = clean_text(chapter, language)
             text_chunks = split_text_into_chunks(cleaned_chapter, max_length=500)
+            local_chunk_counter = 1
 
-            print(f"    Processing chapter {chapter_index}/{len(chapters)} with {len(text_chunks)} chunks")
+            # Magenta text
+            print(f"\033[35m    Processing chapter {chapter_index}/{len(chapters)} with {len(text_chunks)} chunks\033[0m")
 
             # Convert each text chunk to a WAV file using Orca TTS
             for chunk in text_chunks:
-                tts_engine = pvorca.create(access_key=os.getenv("ACCESS_KEY"), model_path=model_path)
-                wav_path = os.path.join(output_dir, f"{base_name}_chunk_{chunk_counter}.wav")
-                tts_engine.synthesize_to_file(text=chunk, output_path=wav_path)
-                tts_engine.delete()
-                chunk_counter += 1
-                print(f"            Saved chunk {chunk_counter} of {chunk_counter + len(text_chunks)} for chapter {chapter_index}")
+                wav_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.wav")
+
+                if not os.path.exists(wav_path):
+                    tts_engine = pvorca.create(access_key=os.getenv("ACCESS_KEY"), model_path=model_path)
+                    tts_engine.synthesize_to_file(text=chunk, output_path=wav_path)
+                    tts_engine.delete()
+                    action = "Saved"
+                    # Green text
+                    color = "\033[32m"
+                else:
+                    action = "Skipped existing"
+                    # Blue text
+                    color = "\033[34m"
+
+                print(f"{color}            {action} chunk {local_chunk_counter} of {len(text_chunks)} for chapter {chapter_index}/{len(chapters)} as chunk {global_chunk_counter}\033[0m")
+                local_chunk_counter += 1
+                global_chunk_counter += 1
 
             # Add an audio marker for end of chapter
-            tts_engine = pvorca.create(access_key=os.getenv("ACCESS_KEY"), model_path=model_path)
-            wav_path = os.path.join(output_dir, f"{base_name}_chunk_{chunk_counter}.wav")
-            if language.lower() == "de":
-                tts_engine.synthesize_to_file(text=f"Ende des Kapitels {chapter_index}", output_path=wav_path)
-            elif language.lower() == "en":
-                tts_engine.synthesize_to_file(text=f"End of chapter {chapter_index}", output_path=wav_path)
-            tts_engine.delete()
-            print(f"        Chapter {chapter_index} end marker saved as chunk {chunk_counter}")
-            chapter_end_chunk_indices.append(chunk_counter)
-            chunk_counter += 1
+            wav_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.wav")
+
+            if not os.path.exists(wav_path):
+                tts_engine = pvorca.create(access_key=os.getenv("ACCESS_KEY"), model_path=model_path)
+                if language.lower() == "de":
+                    tts_engine.synthesize_to_file(text=f"Ende des Kapitels {chapter_index}", output_path=wav_path)
+                elif language.lower() == "en":
+                    tts_engine.synthesize_to_file(text=f"End of chapter {chapter_index}", output_path=wav_path)
+                tts_engine.delete()
+                action = "Saved"
+                # Bright green text
+                color = "\033[92m"
+            else:
+                action = "Skipped existing"
+                # Bright blue text
+                color = "\033[94m"
+
+            print(f"{color}        {action} chapter {chapter_index} end marker saved as chunk {global_chunk_counter}")
+            global_chunk_counter += 1
+
+            chapter_end_chunk_indices.append(global_chunk_counter)
 
         # Combine all WAV chunks into a single MP3 audiobook
         audiobook = AudioSegment.empty()
-        for i in range(chunk_counter):
+        for i in range(1, global_chunk_counter):
             wav_path = os.path.join(output_dir, f"{base_name}_chunk_{i}.wav")
             chunk_audio = AudioSegment.from_wav(wav_path)
             audiobook += chunk_audio
@@ -177,11 +206,13 @@ def chapters_to_mp3(language, gender, chapters, base_name):
 
         mp3_output_path = os.path.join(output_dir, base_name + ".mp3")
         audiobook.export(mp3_output_path, format="mp3")
-        print(f"Audiobook assembled and saved to: {mp3_output_path}")
+        # Cyan text
+        print(f"\033[36mAudiobook assembled and saved to: {mp3_output_path}\033[0m")
 
     finally:
-        print("Cleaning up temporary WAV files...")
-        for i in range(chunk_counter+1):
+        # Gray text
+        print(f"\033[37mCleaning up temporary WAV files...\033[0m")
+        for i in range(1, global_chunk_counter):
             wav_to_remove = os.path.join(output_dir, f"{base_name}_chunk_{i}.wav")
             if os.path.exists(wav_to_remove):
                 os.remove(wav_to_remove)

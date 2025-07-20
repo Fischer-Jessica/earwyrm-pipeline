@@ -5,8 +5,8 @@
 <h1 align="center">Earwyrm Pipeline</h1>
 
 <p align="center">
-  <strong>Current version:</strong> <code>1.3.1</code> &nbsp;|&nbsp;
-  <strong>Last updated:</strong> <code>18-07-2025</code>
+  <strong>Current version:</strong> <code>1.4.0</code> &nbsp;|&nbsp;
+  <strong>Last updated:</strong> <code>20-07-2025</code>
 </p>
 
 ---
@@ -80,7 +80,7 @@ This command will process the `Eragon.epub` file and read it aloud in German, us
 ---
 
 ## Notes
-- Intermediate `.wav` files are created in the output directory during processing but will be deleted after the MP3 file is generated.
+- Intermediate `.wav` files are created in the output directory during processing but will be deleted after the MP3 file is generated or when an error occurs.
 - The output file will be named after the EPUB file, with the `.mp3` extension.
 - To check the length of the generated MP3 file, you can use the `ffprobe` command:
    ```bash
