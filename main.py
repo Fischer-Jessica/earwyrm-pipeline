@@ -174,7 +174,13 @@ def chapters_to_mp3(language, gender, chapters, base_name):
             wav_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.wav")
 
             if not os.path.exists(wav_path):
-                tts_engine = pvorca.create(access_key=os.getenv("ACCESS_KEY"), model_path=model_path)
+                # Use the opposite voice gender for chapter end markers to make them acoustically distinct
+                if gender.lower() == "male":
+                    model_path_chapter_break = os.path.join(model_folder, f'orca_params_{language.lower()}_female.pv')
+                else:
+                    model_path_chapter_break = os.path.join(model_folder, f'orca_params_{language.lower()}_male.pv')
+
+                tts_engine = pvorca.create(access_key=os.getenv("ACCESS_KEY"), model_path=model_path_chapter_break)
                 if language.lower() == "de":
                     tts_engine.synthesize_to_file(text=f"Ende des Kapitels {chapter_index}", output_path=wav_path)
                 elif language.lower() == "en":

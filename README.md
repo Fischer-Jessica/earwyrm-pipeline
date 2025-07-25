@@ -5,8 +5,8 @@
 <h1 align="center">Earwyrm Pipeline</h1>
 
 <p align="center">
-  <strong>Current version:</strong> <code>1.4.0</code> &nbsp;|&nbsp;
-  <strong>Last updated:</strong> <code>20-07-2025</code>
+  <strong>Current version:</strong> <code>1.4.1</code> &nbsp;|&nbsp;
+  <strong>Last updated:</strong> <code>25-07-2025</code>
 </p>
 
 ---
@@ -90,3 +90,4 @@ This command will process the `Eragon.epub` file and read it aloud in German, us
 - If you're using a version **prior to** commit [ebce5a1](https://github.com/Fischer-Jessica/earwyrm-pipeline/commit/ebce5a1b7ca439a2a9e0b12b0b4046da7d4158a9), make sure that the `OUTPUT_PATH` in your `.env` file includes the **full filename** (e.g., `output.wav`), as shown in the `.env.example` file from that version.
   - This is no longer required because the `OUTPUT_PATH` now refers to a **directory**, and the MP3 filename is automatically derived from the EPUB file name.
 - Avoid spaces or special characters in file or folder names as this may lead to unexpected behavior or errors during processing.
+- The chapter end markers are synthesized using the voice of the opposite gender to the main narration voice. This is intentional and serves to make chapter boundaries more distinguishable during playback.
