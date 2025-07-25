@@ -3,6 +3,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 25-07-2025
+### Fixed
+- fixed incorrect order of incrementing `global_chunk_counter` and appending to `chapter_end_chunk_indices` when saving chapter end markers, which caused the pause to be added one chunk too late  
+- fixed spacing issue in `clean_text` where a dot followed by a closing parenthesis (e.g. '.)') was causing the dot to be read aloud unnaturally
+
 ## [1.4.1] - 25-07-2025
 ### Added
 - chapter end markers ("End of chapter x" / "Ende des Kapitels x") are now spoken using the opposite voice gender to distinguish them clearly from the main narration, addressing issue #8

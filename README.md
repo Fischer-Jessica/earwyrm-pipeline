@@ -5,7 +5,7 @@
 <h1 align="center">Earwyrm Pipeline</h1>
 
 <p align="center">
-  <strong>Current version:</strong> <code>1.4.1</code> &nbsp;|&nbsp;
+  <strong>Current version:</strong> <code>1.4.2</code> &nbsp;|&nbsp;
   <strong>Last updated:</strong> <code>25-07-2025</code>
 </p>
 

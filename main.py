@@ -111,14 +111,20 @@ def clean_text(text, language):
 
     # Remove unsupported characters based on language
     if language.lower() == "de":
-        text = re.sub(r"[^a-zA-Z0-9äöüÄÖÜß.,:!?\"()\n\- ]", "", text)
+        text = re.sub(r"[^a-zA-Z0-9äöüÄÖÜß.,:!?\"()\n\- /]", "", text)
     elif language.lower() == "en":
-        text = re.sub(r"[^a-zA-Z0-9.,:!?\"'()\n\- ]", "", text)
+        text = re.sub(r"[^a-zA-Z0-9.,:!?\"'()\n\- /]", "", text)
 
-    # Ensure there's a space after sentence-ending punctuation if missing
-    text = re.sub(r'([.!?])(?=\w)', r'\1 ', text)
-    # Ensure there's a space before opening parentheses if missing
-    text = re.sub(r'(?<![\s(])\(', ' (', text)
+    # Spaces after punctuation
+    text = re.sub(r'([.!?])(?=\S)', r'\1 ', text)
+    text = re.sub(r'([,;:])(?=\S)', r'\1 ', text)
+
+    # Spaces before opening parenthesis
+    text = re.sub(r'(?<!\s)\(', ' (', text)
+
+    # Spaces around dash
+    text = re.sub(r'(?<!\s)-', ' -', text)
+    text = re.sub(r'-(?!\s)', '- ', text)
 
     return text
 
@@ -195,9 +201,8 @@ def chapters_to_mp3(language, gender, chapters, base_name):
                 color = "\033[94m"
 
             print(f"{color}        {action} chapter {chapter_index} end marker saved as chunk {global_chunk_counter}")
-            global_chunk_counter += 1
-
             chapter_end_chunk_indices.append(global_chunk_counter)
+            global_chunk_counter += 1
 
         # Combine all WAV chunks into a single MP3 audiobook
         audiobook = AudioSegment.empty()
