@@ -21,42 +21,51 @@ def epub_to_chapters(epub_path):
 
     :return: List of chapters, each as a string "Title\nContent".
     """
-    ebook = epub.read_epub(epub_path)
+    try:
+        ebook = epub.read_epub(epub_path)
+    except Exception as e:
+        print(f"\033[31mError reading EPUB file '{epub_path}': {e}\033[0m")
+        return []
+
     chapters = []
 
     for doc_item in ebook.get_items_of_type(ITEM_DOCUMENT):
-        soup = BeautifulSoup(doc_item.get_content(), 'html.parser')
-        body = soup.body
-        if not body:
+        try:
+            soup = BeautifulSoup(doc_item.get_content(), 'html.parser')
+            body = soup.body
+            if not body:
+                continue
+
+            current_title = None
+            current_content = []
+
+            for el in body.descendants:
+                if isinstance(el, Tag) and el.name in ['h1', 'h2']:
+                    # Start new chapter, save previous if exists
+                    if current_title or current_content:
+                        full_text = f"{current_title}\n{''.join(current_content).strip()}"
+                        # Filter out None-Strings and empty rows
+                        full_text = '\n'.join([line for line in full_text.splitlines() if line.strip() and line.strip().lower() != 'none'])
+                        chapters.append(full_text)
+                        current_content = []
+
+                    current_title = el.get_text(strip=True)
+
+                elif isinstance(el, NavigableString):
+                    # Collect chapter content, skip headings
+                    if el.parent and el.parent.name not in ['h1', 'h2']:
+                        text = el.strip()
+                        if text and text.lower() != 'none':
+                            current_content.append(text + "\n")
+
+            # Save last chapter
+            if current_title or current_content:
+                full_text = f"{current_title}\n{''.join(current_content).strip()}"
+                full_text = '\n'.join([line for line in full_text.splitlines() if line.strip() and line.strip().lower() != 'none'])
+                chapters.append(full_text)
+        except Exception as e:
+            print(f"\033[31mError processing EPUB document item: {e}\033[0m")
             continue
-
-        current_title = None
-        current_content = []
-
-        for el in body.descendants:
-            if isinstance(el, Tag) and el.name in ['h1', 'h2']:
-                # Start new chapter, save previous if exists
-                if current_title or current_content:
-                    full_text = f"{current_title}\n{''.join(current_content).strip()}"
-                    # Filter out None-Strings and empty rows
-                    full_text = '\n'.join([line for line in full_text.splitlines() if line.strip() and line.strip().lower() != 'none'])
-                    chapters.append(full_text)
-                    current_content = []
-
-                current_title = el.get_text(strip=True)
-
-            elif isinstance(el, NavigableString):
-                # Collect chapter content, skip headings
-                if el.parent and el.parent.name not in ['h1', 'h2']:
-                    text = el.strip()
-                    if text and text.lower() != 'none':
-                        current_content.append(text + "\n")
-
-        # Save last chapter
-        if current_title or current_content:
-            full_text = f"{current_title}\n{''.join(current_content).strip()}"
-            full_text = '\n'.join([line for line in full_text.splitlines() if line.strip() and line.strip().lower() != 'none'])
-            chapters.append(full_text)
 
     return chapters
 
@@ -69,7 +78,12 @@ def split_text_into_chunks(text, max_length):
 
     :return: A list of text chunks, each not exceeding max_length characters.
     """
-    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    try:
+        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    except Exception as e:
+        print(f"\033[31mError splitting text into sentences: {e}\033[0m")
+        return [text]
+
     text_chunks = []
     current_chunk = ""
 
@@ -104,29 +118,33 @@ def clean_text(text, language):
 
     :return: The cleaned text.
     """
-    # Replace various types of quotes with standard ASCII quotes
-    text = text.replace("«", '"').replace("»", '"')
-    text = text.replace("„", '"').replace("“", '"')
-    text = text.replace("‘", "'").replace("’", "'")
+    try:
+        # Replace various types of quotes with standard ASCII quotes
+        text = text.replace("«", '"').replace("»", '"')
+        text = text.replace("„", '"').replace("“", '"')
+        text = text.replace("‘", "'").replace("’", "'")
 
-    # Remove unsupported characters based on language
-    if language.lower() == "de":
-        text = re.sub(r"[^a-zA-Z0-9äöüÄÖÜß.,:!?\"()\n\- /]", "", text)
-    elif language.lower() == "en":
-        text = re.sub(r"[^a-zA-Z0-9.,:!?\"'()\n\- /]", "", text)
+        # Remove unsupported characters based on language
+        if language.lower() == "de":
+            text = re.sub(r"[^a-zA-Z0-9äöüÄÖÜß.,:!?\"()\n\- /]", "", text)
+        elif language.lower() == "en":
+            text = re.sub(r"[^a-zA-Z0-9.,:!?\"'()\n\- /]", "", text)
 
-    # Spaces after punctuation
-    text = re.sub(r'([.!?])(?=\S)', r'\1 ', text)
-    text = re.sub(r'([,;:])(?=\S)', r'\1 ', text)
+        # Spaces after punctuation
+        text = re.sub(r'([.!?])(?=\S)', r'\1 ', text)
+        text = re.sub(r'([,;:])(?=\S)', r'\1 ', text)
 
-    # Spaces before opening parenthesis
-    text = re.sub(r'(?<!\s)\(', ' (', text)
+        # Spaces before opening parenthesis
+        text = re.sub(r'(?<!\s)\(', ' (', text)
 
-    # Spaces around dash
-    text = re.sub(r'(?<!\s)-', ' -', text)
-    text = re.sub(r'-(?!\s)', '- ', text)
+        # Spaces around dash
+        text = re.sub(r'(?<!\s)-', ' -', text)
+        text = re.sub(r'-(?!\s)', '- ', text)
 
-    return text
+        return text
+    except Exception as e:
+        print(f"\033[31mError cleaning text: {e}\033[0m")
+        return text
 
 def chapters_to_mp3(language, gender, chapters, base_name):
     """
@@ -139,7 +157,16 @@ def chapters_to_mp3(language, gender, chapters, base_name):
     """
     model_folder = os.getenv("MODEL_PATH")   # Path to Orca model files
     output_dir = os.getenv("OUTPUT_PATH")   # Output directory for audio files
-    os.makedirs(output_dir, exist_ok=True)
+
+    if not model_folder or not output_dir:
+        print(f"\033[31mError: MODEL_PATH or OUTPUT_PATH environment variables are not set.\033[0m")
+        return
+
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+    except Exception as e:
+        print(f"\033[31mError creating output directory '{output_dir}': {e}\033[0m")
+        return
 
     # Select appropriate Orca model file based on language and gender
     model_path = os.path.join(model_folder, f'orca_params_{language.lower()}_{gender.lower()}.pv')
@@ -161,12 +188,16 @@ def chapters_to_mp3(language, gender, chapters, base_name):
                 wav_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.wav")
 
                 if not os.path.exists(wav_path):
-                    tts_engine = pvorca.create(access_key=os.getenv("ACCESS_KEY"), model_path=model_path)
-                    tts_engine.synthesize_to_file(text=chunk, output_path=wav_path)
-                    tts_engine.delete()
-                    action = "Saved"
-                    # Green text
-                    color = "\033[32m"
+                    try:
+                        tts_engine = pvorca.create(access_key=os.getenv("ACCESS_KEY"), model_path=model_path)
+                        tts_engine.synthesize_to_file(text=chunk, output_path=wav_path)
+                        tts_engine.delete()
+                        action = "Saved"
+                        # Green text
+                        color = "\033[32m"
+                    except Exception as e:
+                        print(f"\033[31mError synthesizing chunk {local_chunk_counter} of chapter {chapter_index}: {e}\033[0m")
+                        continue
                 else:
                     action = "Skipped existing"
                     # Blue text
@@ -180,21 +211,25 @@ def chapters_to_mp3(language, gender, chapters, base_name):
             wav_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.wav")
 
             if not os.path.exists(wav_path):
-                # Use the opposite voice gender for chapter end markers to make them acoustically distinct
-                if gender.lower() == "male":
-                    model_path_chapter_break = os.path.join(model_folder, f'orca_params_{language.lower()}_female.pv')
-                else:
-                    model_path_chapter_break = os.path.join(model_folder, f'orca_params_{language.lower()}_male.pv')
+                try:
+                    # Use the opposite voice gender for chapter end markers to make them acoustically distinct
+                    if gender.lower() == "male":
+                        model_path_chapter_break = os.path.join(model_folder, f'orca_params_{language.lower()}_female.pv')
+                    else:
+                        model_path_chapter_break = os.path.join(model_folder, f'orca_params_{language.lower()}_male.pv')
 
-                tts_engine = pvorca.create(access_key=os.getenv("ACCESS_KEY"), model_path=model_path_chapter_break)
-                if language.lower() == "de":
-                    tts_engine.synthesize_to_file(text=f"Ende des Kapitels {chapter_index}", output_path=wav_path)
-                elif language.lower() == "en":
-                    tts_engine.synthesize_to_file(text=f"End of chapter {chapter_index}", output_path=wav_path)
-                tts_engine.delete()
-                action = "Saved"
-                # Bright green text
-                color = "\033[92m"
+                    tts_engine = pvorca.create(access_key=os.getenv("ACCESS_KEY"), model_path=model_path_chapter_break)
+                    if language.lower() == "de":
+                        tts_engine.synthesize_to_file(text=f"Ende des Kapitels {chapter_index}", output_path=wav_path)
+                    elif language.lower() == "en":
+                        tts_engine.synthesize_to_file(text=f"End of chapter {chapter_index}", output_path=wav_path)
+                    tts_engine.delete()
+                    action = "Saved"
+                    # Bright green text
+                    color = "\033[92m"
+                except Exception as e:
+                    print(f"\033[31mError synthesizing chapter end marker for chapter {chapter_index}: {e}\033[0m")
+                    continue
             else:
                 action = "Skipped existing"
                 # Bright blue text
@@ -208,7 +243,12 @@ def chapters_to_mp3(language, gender, chapters, base_name):
         audiobook = AudioSegment.empty()
         for i in range(1, global_chunk_counter):
             wav_path = os.path.join(output_dir, f"{base_name}_chunk_{i}.wav")
-            chunk_audio = AudioSegment.from_wav(wav_path)
+            try:
+                chunk_audio = AudioSegment.from_wav(wav_path)
+            except Exception as e:
+                print(f"\033[31mError loading WAV chunk {i}: {e}\033[0m")
+                continue
+
             audiobook += chunk_audio
 
             # Add 2 seconds of silence after end-of-chapter markers
@@ -216,17 +256,23 @@ def chapters_to_mp3(language, gender, chapters, base_name):
                 audiobook += AudioSegment.silent(duration=2000)
 
         mp3_output_path = os.path.join(output_dir, base_name + ".mp3")
-        audiobook.export(mp3_output_path, format="mp3")
-        # Cyan text
-        print(f"\033[36mAudiobook assembled and saved to: {mp3_output_path}\033[0m")
+        try:
+            audiobook.export(mp3_output_path, format="mp3")
+            # Cyan text
+            print(f"\033[36mAudiobook assembled and saved to: {mp3_output_path}\033[0m")
+        except Exception as e:
+            print(f"\033[31mError exporting MP3 file '{mp3_output_path}': {e}\033[0m")
 
     finally:
         # Gray text
         print(f"\033[37mCleaning up temporary WAV files...\033[0m")
         for i in range(1, global_chunk_counter):
             wav_to_remove = os.path.join(output_dir, f"{base_name}_chunk_{i}.wav")
-            if os.path.exists(wav_to_remove):
-                os.remove(wav_to_remove)
+            try:
+                if os.path.exists(wav_to_remove):
+                    os.remove(wav_to_remove)
+            except Exception as e:
+                print(f"\033[31mError deleting temporary file '{wav_to_remove}': {e}\033[0m")
 
 # Command-line entry point
 def main():
@@ -239,9 +285,29 @@ def main():
     parser.add_argument("gender", choices=["male", "female"], help="Gender code (male or female)")
 
     args = parser.parse_args()
+
+    # Check if EPUB file exists
+    if not os.path.isfile(args.epub_path):
+        print(f"\033[31mError: EPUB file '{args.epub_path}' does not exist.\033[0m")
+        return
+
+    # Check required environment variables
+    missing_env_vars = []
+    for var in ["ACCESS_KEY", "MODEL_PATH", "OUTPUT_PATH"]:
+        if not os.getenv(var):
+            missing_env_vars.append(var)
+    if missing_env_vars:
+        print(f"\033[31mError: Missing environment variables: {', '.join(missing_env_vars)}\033[0m")
+        return
+
     base_name = os.path.splitext(os.path.basename(args.epub_path))[0]
 
     chapters = epub_to_chapters(args.epub_path)
+
+    if not chapters:
+        print(f"\033[31mNo chapters found or error reading EPUB. Aborting.\033[0m")
+        return
+
     chapters_to_mp3(args.language, args.gender, chapters, base_name)
 
 # Run main() if script is called directly
