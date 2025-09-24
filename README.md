@@ -1,12 +1,18 @@
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Doto:wght@100..900&family=New+Rocker&family=Wavefont:wght@4..1000&display=swap" rel="stylesheet">
+
 <p align="center">
-  <img src="./assets/logo_earwyrm-pipeline.png" alt="Earwyrm Pipeline Logo" width="200" />
+  <img src="./assets/Earwyrm-Pipeline.png" alt="Earwyrm Pipeline Logo" width="300" />
 </p>
 
-<h1 align="center">Earwyrm Pipeline</h1>
+<h1 align="center" style="font-family: New Rocker, monospace;">Earwyrm Pipeline</h1>
+<h2 align="center" style="font-family: Wavefont, monospace;">Your tome hoard, synthesized.</h2>
+<p align="center" style="font-family: Doto, monospace;">Your tome hoard, synthesized.</p>
 
 <p align="center">
-  <strong>Current version:</strong> <code>1.5.0</code> &nbsp;|&nbsp;
-  <strong>Last updated:</strong> <code>25-07-2025</code>
+  <strong>Current version:</strong> <code>1.5.1</code> &nbsp;|&nbsp;
+  <strong>Last updated:</strong> <code>24-09-2025</code>
 </p>
 
 ---
