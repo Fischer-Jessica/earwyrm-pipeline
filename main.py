@@ -1,3 +1,4 @@
+import math
 import os   # For environment variables and file path operations
 from dotenv import load_dotenv   # To load environment variables from a .env file
 import argparse   # For parsing command-line arguments
@@ -12,6 +13,7 @@ from bs4 import Tag   # For handling HTML tags in BeautifulSoup
 import re   # Regular expressions for text processing
 
 load_dotenv()   # Load environment variables from .env file
+SCRIPT_VERSION = "1.6.0"
 
 def epub_to_chapters(epub_path):
     """
@@ -219,10 +221,32 @@ def chapters_to_mp3(language, gender, chapters, base_name):
                         model_path_chapter_break = os.path.join(model_folder, f'orca_params_{language.lower()}_male.pv')
 
                     tts_engine = pvorca.create(access_key=os.getenv("ACCESS_KEY"), model_path=model_path_chapter_break)
-                    if language.lower() == "de":
-                        tts_engine.synthesize_to_file(text=f"Ende des Kapitels {chapter_index}", output_path=wav_path)
-                    elif language.lower() == "en":
-                        tts_engine.synthesize_to_file(text=f"End of chapter {chapter_index}", output_path=wav_path)
+
+                    if chapter_index < len(chapters):
+                        next_chapter = chapters[chapter_index]
+                        word_count = len(next_chapter.split())
+
+                        estimated_minutes = max(1, math.ceil(word_count / 200))
+
+                        if language.lower() == "de":
+                            minute_word = "Minute" if estimated_minutes == 1 else "Minuten"
+                            marker_text = (
+                                f"Ende des Kapitels {chapter_index}. "
+                                f"Das nächste Kapitel dauert etwa {estimated_minutes} {minute_word}."
+                            )
+                        else:
+                            minute_word = "minute" if estimated_minutes == 1 else "minutes"
+                            marker_text = (
+                                f"End of chapter {chapter_index}. "
+                                f"The next chapter will take about {estimated_minutes} {minute_word}."
+                            )
+                    else:
+                        if language.lower() == "de":
+                            marker_text = f"Ende des Kapitels {chapter_index}"
+                        else:
+                            marker_text = f"End of chapter {chapter_index}"
+
+                    tts_engine.synthesize_to_file(text=marker_text, output_path=wav_path)
                     tts_engine.delete()
                     action = "Saved"
                     # Bright green text
@@ -307,6 +331,13 @@ def main():
     if not chapters:
         print(f"\033[31mNo chapters found or error reading EPUB. Aborting.\033[0m")
         return
+
+    # Add version of script as first chapter
+    if args.language.lower() == "de":
+        version_intro = f"Version eins sex null der Earwyrm Pipeline."
+    else:
+        version_intro = f"Version one six zero of the Earwyrm Pipeline."
+    chapters.insert(0, version_intro)
 
     chapters_to_mp3(args.language, args.gender, chapters, base_name)
 

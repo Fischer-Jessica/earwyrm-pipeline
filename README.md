@@ -11,8 +11,8 @@
 <p align="center" style="font-family: Doto, monospace;">Your tome hoard, synthesized.</p>
 
 <p align="center">
-  <strong>Current version:</strong> <code>1.5.1</code> &nbsp;|&nbsp;
-  <strong>Last updated:</strong> <code>24-09-2025</code>
+  <strong>Current version:</strong> <code>1.6.0</code> &nbsp;|&nbsp;
+  <strong>Last updated:</strong> <code>28-01-2026</code>
 </p>
 
 ---
