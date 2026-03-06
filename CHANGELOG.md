@@ -3,6 +3,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 06-03-2026
+### Added
+- intro chunk now includes the voices used for narration and markers
+
+### Changed
+- replaced Picovoice Orca TTS engine with edge-tts
+- intermediate audio files are now MP3 instead of WAV
+- output is now written to `./output/` relative to the script
+- gender argument replaced by `voice` and `marker_voice` arguments
+
+### Removed
+- removed `MODEL_PATH`, `ACCESS_KEY`, `OUTPUT_PATH` environment variables and therefore the usage of the .env file
+
 ## [1.6.0] - 28-01-2026
 ### Added
 - added the estimated length of the next chapter, addressing issue #10

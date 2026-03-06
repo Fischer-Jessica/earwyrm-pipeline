@@ -1,10 +1,11 @@
 import math
 import os   # For environment variables and file path operations
-from dotenv import load_dotenv   # To load environment variables from a .env file
 import argparse   # For parsing command-line arguments
 
-import pvorca   # Picovoice Orca TTS engine for speech synthesis
-from pydub import AudioSegment   # For audio processing and combining WAV files into MP3
+import asyncio   # For running async edge-tts synthesis
+import aiohttp   # For handling edge-tts connection errors
+import edge_tts   # Edge TTS engine for speech synthesis
+from pydub import AudioSegment   # For audio processing and combining chunk MP3 files into a single MP3
 
 from ebooklib import epub, ITEM_DOCUMENT   # To read EPUB files and extract document parts
 from bs4.element import NavigableString  # Represents text nodes within the HTML parse tree
@@ -12,8 +13,45 @@ from bs4 import BeautifulSoup   # To parse and clean up HTML content from EPUB
 from bs4 import Tag   # For handling HTML tags in BeautifulSoup
 import re   # Regular expressions for text processing
 
-load_dotenv()   # Load environment variables from .env file
-SCRIPT_VERSION = "1.6.0"
+async def synthesize_chunk(text, output_path, voice):
+    """
+    Synthesize a single text chunk to an MP3 file using edge-tts.
+
+    :param text: The text to synthesize.
+    :param output_path: File path where the MP3 will be saved.
+    :param voice: Edge-TTS voice name.
+    """
+    communicate = edge_tts.Communicate(text, voice)
+    await communicate.save(output_path)
+
+async def synthesize_chunk_safe(text, output_path, voice, max_wait=60):
+    """
+    Synthesize a single text chunk with infinite retries and exponential backoff.
+
+    :param text: The text to synthesize.
+    :param output_path: File path where the MP3 will be saved.
+    :param voice: Edge-TTS voice name.
+    :param max_wait: Maximum wait time in seconds between retries (default: 60).
+    """
+    attempt = 0
+    while True:
+        try:
+            await synthesize_chunk(text, output_path, voice)
+            if attempt > 0:
+                # Yellow text — recovered after retries
+                print(f"\033[33m            Recovered after {attempt} retries: {text[:50]}...\033[0m")
+            return
+        except (edge_tts.exceptions.NoAudioReceived, aiohttp.client_exceptions.WSServerHandshakeError) as e:
+            attempt += 1
+            wait_time = min(2 ** (attempt - 1), max_wait)  # 1s, 2s, 4s, 8s, ... capped at max_wait
+            # Red text for failure, but we keep going
+            print(f"\033[31m            Attempt {attempt} failed (len={len(text)}): {e} — retrying in {wait_time}s...\033[0m")
+            await asyncio.sleep(wait_time)
+        except Exception as e:
+            # For unexpected errors, also retry with max_wait delay
+            attempt += 1
+            print(f"\033[31m            Attempt {attempt} unexpected error (len={len(text)}): {e} — retrying in {max_wait}s...\033[0m")
+            await asyncio.sleep(max_wait)
 
 def epub_to_chapters(epub_path):
     """
@@ -109,7 +147,15 @@ def split_text_into_chunks(text, max_length):
         else:
             text_chunks.append(sentence)
 
-    return text_chunks
+    # Merge chunks shorter than 50 characters into the previous chunk
+    merged = []
+    for chunk in text_chunks:
+        if len(chunk.strip()) < 50 and merged:
+            merged[-1] += " " + chunk
+        else:
+            merged.append(chunk)
+
+    return merged
 
 def clean_text(text, language):
     """
@@ -148,21 +194,17 @@ def clean_text(text, language):
         print(f"\033[31mError cleaning text: {e}\033[0m")
         return text
 
-def chapters_to_mp3(language, gender, chapters, base_name):
+def chapters_to_mp3(language, voice, marker_voice, chapters, base_name):
     """
     Convert chapters into speech and combine them into a single MP3 file.
 
     :param language: Language code ('de' or 'en') for the text-to-speech model.
-    :param gender: Voice gender ('male' or 'female') for the text-to-speech model.
+    :param voice: Edge-TTS voice name for main narration.
+    :param marker_voice: Edge-TTS voice name for chapter end markers.
     :param chapters: List of chapters, each containing text to be converted to speech.
     :param base_name: Base filename for output files (no extension).
     """
-    model_folder = os.getenv("MODEL_PATH")   # Path to Orca model files
-    output_dir = os.getenv("OUTPUT_PATH")   # Output directory for audio files
-
-    if not model_folder or not output_dir:
-        print(f"\033[31mError: MODEL_PATH or OUTPUT_PATH environment variables are not set.\033[0m")
-        return
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")   # Output directory for audio files
 
     try:
         os.makedirs(output_dir, exist_ok=True)
@@ -170,13 +212,12 @@ def chapters_to_mp3(language, gender, chapters, base_name):
         print(f"\033[31mError creating output directory '{output_dir}': {e}\033[0m")
         return
 
-    # Select appropriate Orca model file based on language and gender
-    model_path = os.path.join(model_folder, f'orca_params_{language.lower()}_{gender.lower()}.pv')
-
     global_chunk_counter = 1
     chapter_end_chunk_indices = []
 
-    try:
+    async def process():
+        nonlocal global_chunk_counter
+
         for chapter_index, chapter in enumerate(chapters, start=1):
             cleaned_chapter = clean_text(chapter, language)
             text_chunks = split_text_into_chunks(cleaned_chapter, max_length=500)
@@ -185,92 +226,65 @@ def chapters_to_mp3(language, gender, chapters, base_name):
             # Magenta text
             print(f"\033[35m    Processing chapter {chapter_index}/{len(chapters)} with {len(text_chunks)} chunks\033[0m")
 
-            # Convert each text chunk to a WAV file using Orca TTS
+            # Convert each text chunk to an MP3 file using edge-tts
             for chunk in text_chunks:
-                wav_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.wav")
+                chunk_mp3_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.mp3")
 
-                if not os.path.exists(wav_path):
-                    try:
-                        tts_engine = pvorca.create(access_key=os.getenv("ACCESS_KEY"), model_path=model_path)
-                        tts_engine.synthesize_to_file(text=chunk, output_path=wav_path)
-                        tts_engine.delete()
-                        action = "Saved"
-                        # Green text
-                        color = "\033[32m"
-                    except Exception as e:
-                        print(f"\033[31mError synthesizing chunk {local_chunk_counter} of chapter {chapter_index}: {e}\033[0m")
-                        continue
-                else:
-                    action = "Skipped existing"
-                    # Blue text
-                    color = "\033[34m"
+                # synthesize_chunk_safe retries indefinitely so that no chunks will be skipped
+                await synthesize_chunk_safe(chunk, chunk_mp3_path, voice)
+                await asyncio.sleep(0.5)
 
-                print(f"{color}            {action} chunk {local_chunk_counter} of {len(text_chunks)} for chapter {chapter_index}/{len(chapters)} as chunk {global_chunk_counter}\033[0m")
+                # Green text
+                print(f"\033[32m            Saved chunk {local_chunk_counter} of {len(text_chunks)} for chapter {chapter_index}/{len(chapters)} as chunk {global_chunk_counter}\033[0m")
                 local_chunk_counter += 1
                 global_chunk_counter += 1
 
             # Add an audio marker for end of chapter
-            wav_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.wav")
+            marker_mp3_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.mp3")
 
-            if not os.path.exists(wav_path):
-                try:
-                    # Use the opposite voice gender for chapter end markers to make them acoustically distinct
-                    if gender.lower() == "male":
-                        model_path_chapter_break = os.path.join(model_folder, f'orca_params_{language.lower()}_female.pv')
-                    else:
-                        model_path_chapter_break = os.path.join(model_folder, f'orca_params_{language.lower()}_male.pv')
+            if chapter_index < len(chapters):
+                next_chapter = chapters[chapter_index]
+                word_count = len(next_chapter.split())
 
-                    tts_engine = pvorca.create(access_key=os.getenv("ACCESS_KEY"), model_path=model_path_chapter_break)
+                estimated_minutes = max(1, math.ceil(word_count / 200))
 
-                    if chapter_index < len(chapters):
-                        next_chapter = chapters[chapter_index]
-                        word_count = len(next_chapter.split())
-
-                        estimated_minutes = max(1, math.ceil(word_count / 200))
-
-                        if language.lower() == "de":
-                            minute_word = "Minute" if estimated_minutes == 1 else "Minuten"
-                            marker_text = (
-                                f"Ende des Kapitels {chapter_index}. "
-                                f"Das nächste Kapitel dauert etwa {estimated_minutes} {minute_word}."
-                            )
-                        else:
-                            minute_word = "minute" if estimated_minutes == 1 else "minutes"
-                            marker_text = (
-                                f"End of chapter {chapter_index}. "
-                                f"The next chapter will take about {estimated_minutes} {minute_word}."
-                            )
-                    else:
-                        if language.lower() == "de":
-                            marker_text = f"Ende des Kapitels {chapter_index}"
-                        else:
-                            marker_text = f"End of chapter {chapter_index}"
-
-                    tts_engine.synthesize_to_file(text=marker_text, output_path=wav_path)
-                    tts_engine.delete()
-                    action = "Saved"
-                    # Bright green text
-                    color = "\033[92m"
-                except Exception as e:
-                    print(f"\033[31mError synthesizing chapter end marker for chapter {chapter_index}: {e}\033[0m")
-                    continue
+                if language.lower() == "de":
+                    minute_word = "Minute" if estimated_minutes == 1 else "Minuten"
+                    marker_text = (
+                        f"Ende des Kapitels {chapter_index}. "
+                        f"Das nächste Kapitel dauert etwa {estimated_minutes} {minute_word}."
+                    )
+                else:
+                    minute_word = "minute" if estimated_minutes == 1 else "minutes"
+                    marker_text = (
+                        f"End of chapter {chapter_index}. "
+                        f"The next chapter will take about {estimated_minutes} {minute_word}."
+                    )
             else:
-                action = "Skipped existing"
-                # Bright blue text
-                color = "\033[94m"
+                if language.lower() == "de":
+                    marker_text = f"Ende des Kapitels {chapter_index}"
+                else:
+                    marker_text = f"End of chapter {chapter_index}"
 
-            print(f"{color}        {action} chapter {chapter_index} end marker saved as chunk {global_chunk_counter}")
+            # Markers also retry indefinitely
+            await synthesize_chunk_safe(marker_text, marker_mp3_path, marker_voice)
+
+            # Bright green text
+            print(f"\033[92m        Saved chapter {chapter_index} end marker as chunk {global_chunk_counter}\033[0m")
             chapter_end_chunk_indices.append(global_chunk_counter)
             global_chunk_counter += 1
 
-        # Combine all WAV chunks into a single MP3 audiobook
+    try:
+        asyncio.run(process())
+
+        # Combine all MP3 chunks into a single MP3 audiobook
         audiobook = AudioSegment.empty()
         for i in range(1, global_chunk_counter):
-            wav_path = os.path.join(output_dir, f"{base_name}_chunk_{i}.wav")
+            assembly_mp3_path = os.path.join(output_dir, f"{base_name}_chunk_{i}.mp3")
             try:
-                chunk_audio = AudioSegment.from_wav(wav_path)
+                chunk_audio = AudioSegment.from_mp3(assembly_mp3_path)
             except Exception as e:
-                print(f"\033[31mError loading WAV chunk {i}: {e}\033[0m")
+                print(f"\033[31mError loading MP3 chunk {i}: {e}\033[0m")
                 continue
 
             audiobook += chunk_audio
@@ -289,14 +303,14 @@ def chapters_to_mp3(language, gender, chapters, base_name):
 
     finally:
         # Gray text
-        print(f"\033[37mCleaning up temporary WAV files...\033[0m")
+        print(f"\033[37mCleaning up temporary MP3 files...\033[0m")
         for i in range(1, global_chunk_counter):
-            wav_to_remove = os.path.join(output_dir, f"{base_name}_chunk_{i}.wav")
+            mp3_to_remove = os.path.join(output_dir, f"{base_name}_chunk_{i}.mp3")
             try:
-                if os.path.exists(wav_to_remove):
-                    os.remove(wav_to_remove)
+                if os.path.exists(mp3_to_remove):
+                    os.remove(mp3_to_remove)
             except Exception as e:
-                print(f"\033[31mError deleting temporary file '{wav_to_remove}': {e}\033[0m")
+                print(f"\033[31mError deleting temporary file '{mp3_to_remove}': {e}\033[0m")
 
 # Command-line entry point
 def main():
@@ -306,22 +320,14 @@ def main():
     parser = argparse.ArgumentParser(description="Convert EPUB to TTS audio")
     parser.add_argument("epub_path", help="Path to the EPUB file")
     parser.add_argument("language", choices=["de", "en"], help="Language code (de or en)")
-    parser.add_argument("gender", choices=["male", "female"], help="Gender code (male or female)")
+    parser.add_argument("voice", help="Edge-TTS voice for main narration (see https://tts.travisvn.com for options)")
+    parser.add_argument("marker_voice", help="Edge-TTS voice for markers (see https://tts.travisvn.com for options)")
 
     args = parser.parse_args()
 
     # Check if EPUB file exists
     if not os.path.isfile(args.epub_path):
         print(f"\033[31mError: EPUB file '{args.epub_path}' does not exist.\033[0m")
-        return
-
-    # Check required environment variables
-    missing_env_vars = []
-    for var in ["ACCESS_KEY", "MODEL_PATH", "OUTPUT_PATH"]:
-        if not os.getenv(var):
-            missing_env_vars.append(var)
-    if missing_env_vars:
-        print(f"\033[31mError: Missing environment variables: {', '.join(missing_env_vars)}\033[0m")
         return
 
     base_name = os.path.splitext(os.path.basename(args.epub_path))[0]
@@ -334,12 +340,12 @@ def main():
 
     # Add version of script as first chapter
     if args.language.lower() == "de":
-        version_intro = f"Version eins sex null der Earwyrm Pipeline."
+        version_intro = f"Version zwei null null der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
     else:
-        version_intro = f"Version one six zero of the Earwyrm Pipeline."
+        version_intro = f"Version two zero zero of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
     chapters.insert(0, version_intro)
 
-    chapters_to_mp3(args.language, args.gender, chapters, base_name)
+    chapters_to_mp3(args.language, args.voice, args.marker_voice, chapters, base_name)
 
 # Run main() if script is called directly
 if __name__ == "__main__":

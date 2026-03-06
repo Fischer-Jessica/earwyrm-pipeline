@@ -4,11 +4,5 @@
 # IDE / Editor specific files (local developer config)
 .idea/
 
-# Environment variables / secrets (local config, never commit real secrets)
-.env
-
-# Output directories (generated files, not source)
+# Output directory (generated files, not source)
 output/
-
-# Picovoice voice model files (downloaded models, too large or licensed)
-models/
