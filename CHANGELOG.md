@@ -3,6 +3,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 12-03-2026
+### Changed
+- chapter duration estimate now in hours and minutes instead of minutes only
+- words-per-minute estimate corrected from 200 to 157 based on measured data
+
 ## [2.0.0] - 06-03-2026
 ### Added
 - intro chunk now includes the voices used for narration and markers

@@ -194,6 +194,42 @@ def clean_text(text, language):
         print(f"\033[31mError cleaning text: {e}\033[0m")
         return text
 
+def format_duration(estimated_minutes, language):
+    """
+    Format a duration in minutes into a human-readable string with hours and minutes.
+    Handles singular/plural for both German and English.
+
+    :param estimated_minutes: Duration in minutes (integer).
+    :param language: Language code ('de' or 'en').
+
+    :return: Formatted duration string, e.g. "1 Stunde und 30 Minuten" or "1 hour and 30 minutes".
+    """
+    hours = estimated_minutes // 60
+    minutes = estimated_minutes % 60
+
+    if language.lower() == "de":
+        if hours > 0 and minutes > 0:
+            hour_word = "Stunde" if hours == 1 else "Stunden"
+            minute_word = "Minute" if minutes == 1 else "Minuten"
+            return f"{hours} {hour_word} und {minutes} {minute_word}"
+        elif hours > 0:
+            hour_word = "Stunde" if hours == 1 else "Stunden"
+            return f"{hours} {hour_word}"
+        else:
+            minute_word = "Minute" if minutes == 1 else "Minuten"
+            return f"{minutes} {minute_word}"
+    else:
+        if hours > 0 and minutes > 0:
+            hour_word = "hour" if hours == 1 else "hours"
+            minute_word = "minute" if minutes == 1 else "minutes"
+            return f"{hours} {hour_word} and {minutes} {minute_word}"
+        elif hours > 0:
+            hour_word = "hour" if hours == 1 else "hours"
+            return f"{hours} {hour_word}"
+        else:
+            minute_word = "minute" if minutes == 1 else "minutes"
+            return f"{minutes} {minute_word}"
+
 def chapters_to_mp3(language, voice, marker_voice, chapters, base_name):
     """
     Convert chapters into speech and combine them into a single MP3 file.
@@ -245,20 +281,18 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name):
             if chapter_index < len(chapters):
                 next_chapter = chapters[chapter_index]
                 word_count = len(next_chapter.split())
-
-                estimated_minutes = max(1, math.ceil(word_count / 200))
+                estimated_minutes = max(1, math.ceil(word_count / 157))
+                duration_str = format_duration(estimated_minutes, language)
 
                 if language.lower() == "de":
-                    minute_word = "Minute" if estimated_minutes == 1 else "Minuten"
                     marker_text = (
                         f"Ende des Kapitels {chapter_index}. "
-                        f"Das nächste Kapitel dauert etwa {estimated_minutes} {minute_word}."
+                        f"Das nächste Kapitel dauert etwa {duration_str}."
                     )
                 else:
-                    minute_word = "minute" if estimated_minutes == 1 else "minutes"
                     marker_text = (
                         f"End of chapter {chapter_index}. "
-                        f"The next chapter will take about {estimated_minutes} {minute_word}."
+                        f"The next chapter will take about {duration_str}."
                     )
             else:
                 if language.lower() == "de":
@@ -340,9 +374,9 @@ def main():
 
     # Add version of script as first chapter
     if args.language.lower() == "de":
-        version_intro = f"Version zwei null null der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
+        version_intro = f"Version zwei eins null der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
     else:
-        version_intro = f"Version two zero zero of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
+        version_intro = f"Version two one zero of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
     chapters.insert(0, version_intro)
 
     chapters_to_mp3(args.language, args.voice, args.marker_voice, chapters, base_name)
