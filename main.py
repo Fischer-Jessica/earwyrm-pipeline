@@ -1,6 +1,8 @@
 import math
 import os   # For environment variables and file path operations
 import argparse   # For parsing command-line arguments
+import subprocess   # For piping raw PCM directly into ffmpeg
+import itertools   # For chaining the first segment back onto the generator
 
 import asyncio   # For running async edge-tts synthesis
 import aiohttp   # For handling edge-tts connection errors
@@ -230,6 +232,88 @@ def format_duration(estimated_minutes, language):
             minute_word = "minute" if minutes == 1 else "minutes"
             return f"{minutes} {minute_word}"
 
+def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_indices):
+    """
+    Yield the chunk MP3s one at a time as AudioSegments, inserting 2 seconds of
+    silence after every end-of-chapter marker.
+
+    This is a generator on purpose, because so only a single chunk is ever held in memory,
+    instead of the whole audiobook.
+
+    :param output_dir: Directory containing the temporary chunk MP3 files.
+    :param base_name: Base filename used for the chunk MP3 files.
+    :param total_chunks: Number of chunks written (i.e. global_chunk_counter).
+    :param chapter_end_chunk_indices: Set of chunk indices that are chapter end markers.
+
+    :return: AudioSegment objects in playback order.
+    """
+    for i in range(1, total_chunks):
+        assembly_mp3_path = os.path.join(output_dir, f"{base_name}_chunk_{i}.mp3")
+        try:
+            chunk_audio = AudioSegment.from_mp3(assembly_mp3_path)
+        except Exception as e:
+            print(f"\033[31mError loading MP3 chunk {i}: {e}\033[0m")
+            continue
+
+        yield chunk_audio
+
+        # Add 2 seconds of silence after end-of-chapter markers
+        if i in chapter_end_chunk_indices:
+            yield AudioSegment.silent(duration=2000, frame_rate=chunk_audio.frame_rate)
+
+def export_mp3_streaming(segments, mp3_output_path, bitrate="48k"):
+    """
+    Encode an iterable of AudioSegments into a single MP3 by piping raw PCM
+    straight into ffmpeg.
+
+    pydub's own export() writes a temporary WAV file first, and the WAV/RIFF
+    header stores sizes as 32-bit unsigned integers. Anything past 4 GiB of PCM
+    (roughly 25 hours at 24 kHz mono) therefore dies with
+    "'L' format requires 0 <= number <= 4294967295". Raw PCM has no header and
+    no size field, so this approach has no length limit.
+
+    :param segments: Iterable of AudioSegment objects, in playback order.
+    :param mp3_output_path: Path of the MP3 file to write.
+    :param bitrate: MP3 bitrate passed to libmp3lame (default: "48k", matching the 48 kbps CBR that edge-tts
+                    delivers for the individual chunks).
+    """
+    stream = iter(segments)
+    try:
+        first = next(stream)
+    except StopIteration:
+        raise RuntimeError("No audio segments to export")
+
+    # The first segment defines the output format. Everything else is coerced to match.
+    frame_rate = first.frame_rate
+    channels = first.channels
+
+    ffmpeg_process = subprocess.Popen(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "s16le", "-ar", str(frame_rate), "-ac", str(channels),
+            "-i", "pipe:0",
+            "-c:a", "libmp3lame", "-b:a", bitrate,
+            mp3_output_path,
+        ],
+        stdin=subprocess.PIPE,
+    )
+
+    try:
+        for segment in itertools.chain([first], stream):
+            segment = segment.set_frame_rate(frame_rate).set_channels(channels).set_sample_width(2)
+            ffmpeg_process.stdin.write(segment.raw_data)
+    except BrokenPipeError:
+        pass   # ffmpeg died early; the return code below reports why
+    finally:
+        try:
+            ffmpeg_process.stdin.close()
+        except BrokenPipeError:
+            pass
+
+    return_code = ffmpeg_process.wait()
+    if return_code != 0:
+        raise RuntimeError(f"ffmpeg exited with code {return_code}")
+
 def chapters_to_mp3(language, voice, marker_voice, chapters, base_name):
     """
     Convert chapters into speech and combine them into a single MP3 file.
@@ -311,25 +395,16 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name):
     try:
         asyncio.run(process())
 
-        # Combine all MP3 chunks into a single MP3 audiobook
-        audiobook = AudioSegment.empty()
-        for i in range(1, global_chunk_counter):
-            assembly_mp3_path = os.path.join(output_dir, f"{base_name}_chunk_{i}.mp3")
-            try:
-                chunk_audio = AudioSegment.from_mp3(assembly_mp3_path)
-            except Exception as e:
-                print(f"\033[31mError loading MP3 chunk {i}: {e}\033[0m")
-                continue
-
-            audiobook += chunk_audio
-
-            # Add 2 seconds of silence after end-of-chapter markers
-            if i in chapter_end_chunk_indices:
-                audiobook += AudioSegment.silent(duration=2000)
-
+        # Combine all MP3 chunks into a single MP3 audiobook.
+        # Streamed chunk by chunk, so neither RAM nor the 4 GiB WAV limit apply.
         mp3_output_path = os.path.join(output_dir, base_name + ".mp3")
+        marker_indices = set(chapter_end_chunk_indices)
+
         try:
-            audiobook.export(mp3_output_path, format="mp3")
+            export_mp3_streaming(
+                iter_audio_segments(output_dir, base_name, global_chunk_counter, marker_indices),
+                mp3_output_path,
+            )
             # Cyan text
             print(f"\033[36mAudiobook assembled and saved to: {mp3_output_path}\033[0m")
         except Exception as e:
@@ -374,9 +449,9 @@ def main():
 
     # Add version of script as first chapter
     if args.language.lower() == "de":
-        version_intro = f"Version zwei eins null der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
+        version_intro = f"Version zwei eins eins der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
     else:
-        version_intro = f"Version two one zero of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
+        version_intro = f"Version two one one of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
     chapters.insert(0, version_intro)
 
     chapters_to_mp3(args.language, args.voice, args.marker_voice, chapters, base_name)
