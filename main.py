@@ -192,7 +192,8 @@ def split_text_into_chunks(text, max_length):
 
 def clean_text(text, language):
     """
-    Clean up the text by replacing special quotes and removing unsupported characters.
+    Clean up the text by replacing special quotes, mapping pause-carrying
+    punctuation onto a comma, and removing characters unsupported by edge-tts.
 
     :param text: The text to clean.
     :param language: Language code ('de' or 'en') to determine allowed characters.
@@ -205,15 +206,32 @@ def clean_text(text, language):
         text = text.replace("„", '"').replace("“", '"')
         text = text.replace("‘", "'").replace("’", "'")
 
-        # Remove unsupported characters based on language
-        if language.lower() == "de":
-            text = re.sub(r"[^a-zA-Z0-9äöüÄÖÜß.,:!?\"()\n\- /]", "", text)
-        elif language.lower() == "en":
-            text = re.sub(r"[^a-zA-Z0-9.,:!?\"'()\n\- /]", "", text)
+        # En/em dashes, ellipses and semicolons carry pause information, so map
+        # them onto a comma (e.g. "zögerte – dann" becoming "zögerte  dann").
+        # Any surrounding whitespace is absorbed into the substitution so this
+        # doesn't leave a stray space before the comma.
+        text = re.sub(r'\s*[–—]\s*', ', ', text)
+        text = re.sub(r'\s*…\s*', ', ', text)
+        text = re.sub(r'\s*;\s*', ', ', text)
 
-        # Spaces after punctuation
+        # Keep any Unicode letter or digit (not just ASCII plus German
+        # umlauts) so accented proper names like "José" or "François" survive
+        # instead of being silently mangled, plus common currency symbols.
+        if language.lower() == "de":
+            text = re.sub(r"[^\w.,:!?\"()\n\- /€$£]", "", text)
+        elif language.lower() == "en":
+            text = re.sub(r"[^\w.,:!?\"'()\n\- /€$£]", "", text)
+
+        # \w above also matches "_", which Azure's markdown-aware text
+        # pipeline treats as emphasis syntax rather than a literal character,
+        # so it's stripped separately here. "*", "#" and "`" are markdown-
+        # special too, but those are already excluded by the allowlist above.
+        text = text.replace("_", "")
+
+        # Spaces after punctuation. Semicolons are handled above and mapped to
+        # a comma before this point, so they never reach here.
         text = re.sub(r'([.!?])(?=\S)', r'\1 ', text)
-        text = re.sub(r'([,;:])(?=\S)', r'\1 ', text)
+        text = re.sub(r'([,:])(?=\S)', r'\1 ', text)
 
         # Spaces before opening parenthesis
         text = re.sub(r'(?<!\s)\(', ' (', text)
@@ -504,9 +522,9 @@ def main():
 
     # Add version of script as first chapter
     if args.language.lower() == "de":
-        version_intro = f"Version zwei drei null der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
+        version_intro = f"Version zwei drei eins der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
     else:
-        version_intro = f"Version two three zero of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
+        version_intro = f"Version two three one of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
     chapters.insert(0, version_intro)
 
     chapters_to_mp3(args.language, args.voice, args.marker_voice, chapters, base_name)

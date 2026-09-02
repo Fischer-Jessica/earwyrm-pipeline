@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 02-09-2026
+### Fixed
+- clean_text no longer mangles accented proper names
+- en/em dashes, ellipses and semicolons map to a comma instead of being silently dropped
+- euro, dollar and pound signs survive instead of being stripped
+- asterisks, underscores, hashes and backticks are stripped, since edge-tts's Azure backend interprets CommonMark markdown syntax and would otherwise swallow them as formatting instead of reading them aloud
+
 ## [2.3.0] - 02-09-2026
 ### Fixed
 - epub chapters now follow spine reading order instead of manifest order, and skip non-linear entries and the navigation document
