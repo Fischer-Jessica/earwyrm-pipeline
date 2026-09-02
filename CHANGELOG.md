@@ -3,6 +3,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 02-09-2026
+### Added
+- interrupted runs can now be resumed because chunk MP3s that already exist are reused instead of being synthesised again
+- chunks are written atomically through a temporary `.part` file, so an existing chunk is always complete and an interrupted run cannot leave a truncated chunk behind
+
+### Changed
+- temporary MP3 chunks are only deleted once the audiobook has been assembled successfully, instead of also being deleted when the run was interrupted or failed
+
 ## [2.1.1] - 02-09-2026
 ### Fixed
 - fixed the MP3 export failing for audiobooks above about 25 hours of length due to the limit of the WAV format

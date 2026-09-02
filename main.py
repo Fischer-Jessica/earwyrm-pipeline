@@ -19,12 +19,22 @@ async def synthesize_chunk(text, output_path, voice):
     """
     Synthesize a single text chunk to an MP3 file using edge-tts.
 
+    The audio is written to a temporary ".part" file and only moved to
+    output_path once edge-tts has finished. edge_tts.Communicate.save() opens
+    the target file before streaming, so a file interrupted mid-write would
+    otherwise be left truncated. A truncated MP3 still decodes without any
+    error, just shorter, which would silently clip audio when the chunk is
+    reused on a later run. os.replace() is atomic, so output_path existing
+    always means it is complete.
+
     :param text: The text to synthesize.
     :param output_path: File path where the MP3 will be saved.
     :param voice: Edge-TTS voice name.
     """
+    partial_path = output_path + ".part"
     communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(output_path)
+    await communicate.save(partial_path)
+    os.replace(partial_path, output_path)
 
 async def synthesize_chunk_safe(text, output_path, voice, max_wait=60):
     """
@@ -350,6 +360,15 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name):
             for chunk in text_chunks:
                 chunk_mp3_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.mp3")
 
+                # Reuse chunks from an interrupted run. Thanks to the atomic write in
+                # synthesize_chunk, an existing file is guaranteed to be complete.
+                if os.path.exists(chunk_mp3_path):
+                    # Blue text
+                    print(f"\033[34m            Reused chunk {local_chunk_counter} of {len(text_chunks)} for chapter {chapter_index}/{len(chapters)} as chunk {global_chunk_counter}\033[0m")
+                    local_chunk_counter += 1
+                    global_chunk_counter += 1
+                    continue
+
                 # synthesize_chunk_safe retries indefinitely so that no chunks will be skipped
                 await synthesize_chunk_safe(chunk, chunk_mp3_path, voice)
                 await asyncio.sleep(0.5)
@@ -385,12 +404,19 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name):
                     marker_text = f"End of chapter {chapter_index}"
 
             # Markers also retry indefinitely
-            await synthesize_chunk_safe(marker_text, marker_mp3_path, marker_voice)
+            if os.path.exists(marker_mp3_path):
+                # Bright blue text
+                print(f"\033[94m        Reused chapter {chapter_index} end marker as chunk {global_chunk_counter}\033[0m")
+            else:
+                await synthesize_chunk_safe(marker_text, marker_mp3_path, marker_voice)
 
-            # Bright green text
-            print(f"\033[92m        Saved chapter {chapter_index} end marker as chunk {global_chunk_counter}\033[0m")
+                # Bright green text
+                print(f"\033[92m        Saved chapter {chapter_index} end marker as chunk {global_chunk_counter}\033[0m")
+
             chapter_end_chunk_indices.append(global_chunk_counter)
             global_chunk_counter += 1
+
+    export_succeeded = False
 
     try:
         asyncio.run(process())
@@ -405,21 +431,29 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name):
                 iter_audio_segments(output_dir, base_name, global_chunk_counter, marker_indices),
                 mp3_output_path,
             )
+            export_succeeded = True
             # Cyan text
             print(f"\033[36mAudiobook assembled and saved to: {mp3_output_path}\033[0m")
         except Exception as e:
             print(f"\033[31mError exporting MP3 file '{mp3_output_path}': {e}\033[0m")
 
     finally:
-        # Gray text
-        print(f"\033[37mCleaning up temporary MP3 files...\033[0m")
-        for i in range(1, global_chunk_counter):
-            mp3_to_remove = os.path.join(output_dir, f"{base_name}_chunk_{i}.mp3")
-            try:
-                if os.path.exists(mp3_to_remove):
-                    os.remove(mp3_to_remove)
-            except Exception as e:
-                print(f"\033[31mError deleting temporary file '{mp3_to_remove}': {e}\033[0m")
+        if not export_succeeded:
+            # Yellow text: keeping the chunks lets the next run resume instead of starting over
+            print(f"\033[33mRun did not finish. Keeping temporary MP3 chunks in '{output_dir}' so the next run can resume.\033[0m")
+        else:
+            # Gray text
+            print(f"\033[37mCleaning up temporary MP3 files...\033[0m")
+            for i in range(1, global_chunk_counter):
+                for mp3_to_remove in (
+                    os.path.join(output_dir, f"{base_name}_chunk_{i}.mp3"),
+                    os.path.join(output_dir, f"{base_name}_chunk_{i}.mp3.part"),
+                ):
+                    try:
+                        if os.path.exists(mp3_to_remove):
+                            os.remove(mp3_to_remove)
+                    except Exception as e:
+                        print(f"\033[31mError deleting temporary file '{mp3_to_remove}': {e}\033[0m")
 
 # Command-line entry point
 def main():
@@ -449,9 +483,9 @@ def main():
 
     # Add version of script as first chapter
     if args.language.lower() == "de":
-        version_intro = f"Version zwei eins eins der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
+        version_intro = f"Version zwei zwei null der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
     else:
-        version_intro = f"Version two one one of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
+        version_intro = f"Version two two zero of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
     chapters.insert(0, version_intro)
 
     chapters_to_mp3(args.language, args.voice, args.marker_voice, chapters, base_name)

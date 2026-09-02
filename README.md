@@ -11,7 +11,7 @@
 <p align="center" style="font-family: Doto, monospace;">Your tome hoard, synthesized.</p>
 
 <p align="center">
-  <strong>Current version:</strong> <code>2.1.1</code> &nbsp;|&nbsp;
+  <strong>Current version:</strong> <code>2.2.0</code> &nbsp;|&nbsp;
   <strong>Last updated:</strong> <code>02-09-2026</code>
 </p>
 
@@ -76,7 +76,8 @@ This command will process the `Eragon.epub` file and read it aloud in German, sa
 ---
 
 ## Notes
-- Intermediate `.mp3` files are created in `./output/` during processing but will be deleted after the final MP3 is generated or when an error occurs.
+- Intermediate `.mp3` files are created in `./output/` during processing and are deleted once the final MP3 has been assembled successfully. If the run is interrupted or fails, they are kept so that interrupted runs can be resumed by running the same command again.
+- When resuming it is vital to use the same parameters as before because existing chunks are not re-synthesised. This could lead to, for example, the voice changing partway through.
 - Currently only supports `de` (German) and `en` (English), as marker text is only implemented for these two languages.
 - The output file will be named after the EPUB file, with the `.mp3` extension.
 - To check the length of the generated MP3 file, you can use the `ffprobe` command:
