@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 02-09-2026
+### Fixed
+- epub chapters now follow spine reading order instead of manifest order, and skip non-linear entries and the navigation document
+- long sentences split across chunks no longer duplicate their tail text
+- css and script tags inside chapter bodies are stripped instead of being read aloud
+- nested tags in chapter headings no longer produce a missing space or duplicate text in the chapter body
+
 ## [2.2.0] - 02-09-2026
 ### Added
 - interrupted runs can now be resumed because chunk MP3s that already exist are reused instead of being synthesised again

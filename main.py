@@ -69,6 +69,11 @@ def epub_to_chapters(epub_path):
     """
     Extract chapters from an EPUB by splitting text between <h1> and <h2> headings.
 
+    Documents are walked in spine order (the book's actual reading order),
+    not manifest order, since nothing guarantees the two agree. Spine
+    entries marked non-linear and the navigation document are skipped, since
+    neither is narratable chapter content.
+
     :param epub_path: Path to the EPUB file.
 
     :return: List of chapters, each as a string "Title\nContent".
@@ -81,9 +86,20 @@ def epub_to_chapters(epub_path):
 
     chapters = []
 
-    for doc_item in ebook.get_items_of_type(ITEM_DOCUMENT):
+    for idref, linear in ebook.spine:
+        if linear == 'no':
+            continue
+
+        doc_item = ebook.get_item_with_id(idref)
+        if doc_item is None or doc_item.get_type() != ITEM_DOCUMENT or isinstance(doc_item, epub.EpubNav):
+            continue
+
         try:
             soup = BeautifulSoup(doc_item.get_content(), 'html.parser')
+            # Strip CSS and scripts so they never turn up as spoken text
+            for unwanted in soup(['style', 'script']):
+                unwanted.decompose()
+
             body = soup.body
             if not body:
                 continue
@@ -101,11 +117,15 @@ def epub_to_chapters(epub_path):
                         chapters.append(full_text)
                         current_content = []
 
-                    current_title = el.get_text(strip=True)
+                    # " " join separator so nested tags (e.g. <h1>Kapitel <em>Zwei</em></h1>)
+                    # don't get concatenated without a space
+                    current_title = el.get_text(" ", strip=True)
 
                 elif isinstance(el, NavigableString):
-                    # Collect chapter content, skip headings
-                    if el.parent and el.parent.name not in ['h1', 'h2']:
+                    # Collect chapter content, skip headings. Checks all ancestors,
+                    # not just the direct parent, so text nested inside a heading
+                    # (e.g. the <em> in the example above) isn't also picked up as body text.
+                    if not any(isinstance(parent, Tag) and parent.name in ['h1', 'h2'] for parent in el.parents):
                         text = el.strip()
                         if text and text.lower() != 'none':
                             current_content.append(text + "\n")
@@ -156,6 +176,7 @@ def split_text_into_chunks(text, max_length):
                     current_chunk = word
             if current_chunk:
                 text_chunks.append(current_chunk)
+                current_chunk = ""
         else:
             text_chunks.append(sentence)
 
@@ -483,9 +504,9 @@ def main():
 
     # Add version of script as first chapter
     if args.language.lower() == "de":
-        version_intro = f"Version zwei zwei null der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
+        version_intro = f"Version zwei drei null der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
     else:
-        version_intro = f"Version two two zero of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
+        version_intro = f"Version two three zero of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
     chapters.insert(0, version_intro)
 
     chapters_to_mp3(args.language, args.voice, args.marker_voice, chapters, base_name)
