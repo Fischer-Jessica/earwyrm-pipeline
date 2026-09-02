@@ -3,6 +3,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 02-09-2026
+### Added
+- book metadata (title, author, language, series, series index, source, custom Ordner/Version fields) and cover art are embedded into the finished MP3, read from the EPUB
+- audiobook duration is printed automatically at the end of a run
+
+### Fixed
+- chapter end markers announce the correct chapter number, since the version intro was previously counted as chapter 1
+- clean_text no longer forces spaces around every hyphen, since that broke compound words like "E-Mail" and "Ich-Erzähler" into two spoken words
+- short chunks are no longer merged into the previous one if the combined result would exceed max_length
+- sentence splitting no longer cuts mid-abbreviation (e.g. "Dr.", "z. B."), based on a curated but non-exhaustive abbreviation list
+- a chunk that fails to load during final MP3 assembly is now reported explicitly, including whether it was a chapter-end marker, instead of silently disappearing from the output
+
 ## [2.3.1] - 02-09-2026
 ### Fixed
 - clean_text no longer mangles accented proper names

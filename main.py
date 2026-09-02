@@ -9,7 +9,7 @@ import aiohttp   # For handling edge-tts connection errors
 import edge_tts   # Edge TTS engine for speech synthesis
 from pydub import AudioSegment   # For audio processing and combining chunk MP3 files into a single MP3
 
-from ebooklib import epub, ITEM_DOCUMENT   # To read EPUB files and extract document parts
+from ebooklib import epub, ITEM_DOCUMENT, ITEM_COVER   # To read EPUB files and extract document parts
 from bs4.element import NavigableString  # Represents text nodes within the HTML parse tree
 from bs4 import BeautifulSoup   # To parse and clean up HTML content from EPUB
 from bs4 import Tag   # For handling HTML tags in BeautifulSoup
@@ -141,9 +141,132 @@ def epub_to_chapters(epub_path):
 
     return chapters
 
+def epub_metadata_for_mp3(epub_path):
+    """
+    Extract the book metadata and cover image intended for embedding into
+    the finished MP3, as opposed to bookkeeping fields that describe the
+    EPUB file itself rather than the book (e.g. Sigil's own version, the
+    calibre UUID, the last-modified date, or maintainer-specific custom
+    fields like "Ordner"/"Version").
+
+    "calibre:series" is embedded as-is, including the literal value
+    "Standalone" for works that aren't part of a series -- there is no
+    special-casing here, by design. Similarly, the maintainer's own custom
+    "Ordner" and "Version" fields are embedded as-is, as custom (TXXX) tags,
+    despite not being standard book metadata -- this maintainer wants them
+    kept regardless.
+
+    :param epub_path: Path to the EPUB file.
+
+    :return: A tuple (metadata, cover_item). metadata is a dict with any of
+             the keys "title", "artist", "language", "album", "track",
+             "comment", "Ordner", "Version" that could be determined; keys
+             with no value are omitted. cover_item is the ebooklib item
+             holding the cover image, or None if none was found.
+    """
+    ebook = epub.read_epub(epub_path)
+    metadata = {}
+
+    def first(namespace, name):
+        values = ebook.get_metadata(namespace, name)
+        return values[0][0] if values else None
+
+    title = first('DC', 'title')
+    if title:
+        metadata['title'] = title
+
+    creator = first('DC', 'creator')
+    if creator:
+        metadata['artist'] = creator
+
+    language = first('DC', 'language')
+    if language:
+        metadata['language'] = language
+
+    source = first('DC', 'source')
+    if source:
+        metadata['comment'] = source
+
+    series = None
+    series_index = None
+    cover_id = None
+    ordner = None
+    version = None
+    for _, attrs in ebook.get_metadata('OPF', 'meta'):
+        name = attrs.get('name')
+        if name == 'calibre:series':
+            series = attrs.get('content')
+        elif name == 'calibre:series_index':
+            series_index = attrs.get('content')
+        elif name == 'cover':
+            cover_id = attrs.get('content')
+        elif name == 'Ordner':
+            ordner = attrs.get('content')
+        elif name == 'Version':
+            version = attrs.get('content')
+
+    if series:
+        metadata['album'] = series
+        if series_index is not None:
+            metadata['track'] = series_index
+
+    if ordner:
+        metadata['Ordner'] = ordner
+    if version:
+        metadata['Version'] = version
+
+    # The "cover" meta's content is normally a manifest item id, but some
+    # tools have been seen using a filename-like id instead. get_item_with_id()
+    # only matches a real id, so fall back to whichever image the EPUB marks
+    # as ITEM_COVER if the direct lookup comes up empty.
+    cover_item = ebook.get_item_with_id(cover_id) if cover_id else None
+    if cover_item is None:
+        cover_item = next(iter(ebook.get_items_of_type(ITEM_COVER)), None)
+
+    return metadata, cover_item
+
+# Common German/English abbreviations that end in a period but aren't a
+# sentence boundary. Not exhaustive -- an abbreviation missing from this list
+# still gets treated as a sentence end, same as before this fix.
+_ABBREVIATIONS = {
+    "z", "b", "d", "h", "u", "a",  # single letters from "z. B.", "d. h.", "u. a." etc.
+    "z.b", "d.h", "u.a", "v.a", "bzw", "usw", "etc", "ca", "dr", "prof",
+    "nr", "bspw", "sog", "inkl", "exkl", "vgl", "ggf", "evtl", "insb",
+    "mr", "mrs", "ms", "sr", "jr", "vs", "st", "e.g", "i.e",
+}
+
+def _split_sentences(text):
+    """
+    Split text into sentences on '.', '!' or '?' followed by whitespace,
+    except when the word immediately before the punctuation is a known
+    abbreviation (see _ABBREVIATIONS) -- e.g. "Dr. Müller" or "z. B. Äpfel"
+    aren't split into "Dr." / "Müller ging..." and "z." / "B." / "Äpfel...".
+
+    :param text: The text to split into sentences.
+
+    :return: A list of sentences.
+    """
+    sentences = []
+    start = 0
+    for match in re.finditer(r'[.!?]+\s+', text):
+        preceding = re.search(r'(\S+)$', text[start:match.start() + 1])
+        word = preceding.group(1).rstrip('.!?').lower() if preceding else ""
+        if word in _ABBREVIATIONS:
+            continue
+        sentences.append(text[start:match.end()].strip())
+        start = match.end()
+    sentences.append(text[start:].strip())
+    return sentences
+
 def split_text_into_chunks(text, max_length):
     """
     Split the given text into chunks not exceeding max_length characters, trying to preserve sentence boundaries.
+
+    Sentence boundaries are detected with _split_sentences(), which knows
+    about a short list of common abbreviations (e.g. "Dr.", "z. B.") so it
+    doesn't cut a sentence in half right after one of those. This list is a
+    heuristic, not exhaustive -- an abbreviation not on it will still be
+    split on like before.
 
     :param text: The text to be split into chunks.
     :param max_length: Maximum number of characters per chunk.
@@ -151,7 +274,7 @@ def split_text_into_chunks(text, max_length):
     :return: A list of text chunks, each not exceeding max_length characters.
     """
     try:
-        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+        sentences = _split_sentences(text.strip())
     except Exception as e:
         print(f"\033[31mError splitting text into sentences: {e}\033[0m")
         return [text]
@@ -180,10 +303,13 @@ def split_text_into_chunks(text, max_length):
         else:
             text_chunks.append(sentence)
 
-    # Merge chunks shorter than 50 characters into the previous chunk
+    # Merge chunks shorter than 50 characters into the previous chunk, but
+    # only if the combined result still fits max_length. Otherwise, several
+    # short sentences in a row could merge into one chunk far larger than the
+    # limit this function is supposed to enforce.
     merged = []
     for chunk in text_chunks:
-        if len(chunk.strip()) < 50 and merged:
+        if merged and len(chunk.strip()) < 50 and len(merged[-1]) + 1 + len(chunk) <= max_length:
             merged[-1] += " " + chunk
         else:
             merged.append(chunk)
@@ -236,10 +362,6 @@ def clean_text(text, language):
         # Spaces before opening parenthesis
         text = re.sub(r'(?<!\s)\(', ' (', text)
 
-        # Spaces around dash
-        text = re.sub(r'(?<!\s)-', ' -', text)
-        text = re.sub(r'-(?!\s)', '- ', text)
-
         return text
     except Exception as e:
         print(f"\033[31mError cleaning text: {e}\033[0m")
@@ -281,7 +403,7 @@ def format_duration(estimated_minutes, language):
             minute_word = "minute" if minutes == 1 else "minutes"
             return f"{minutes} {minute_word}"
 
-def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_indices):
+def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_indices, failed_chunks=None):
     """
     Yield the chunk MP3s one at a time as AudioSegments, inserting 2 seconds of
     silence after every end-of-chapter marker.
@@ -293,6 +415,9 @@ def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_i
     :param base_name: Base filename used for the chunk MP3 files.
     :param total_chunks: Number of chunks written (i.e. global_chunk_counter).
     :param chapter_end_chunk_indices: Set of chunk indices that are chapter end markers.
+    :param failed_chunks: Optional list. Any chunk index that fails to load is
+                    appended to it, so the caller can warn about a resulting gap
+                    in the final audio instead of it passing unnoticed.
 
     :return: AudioSegment objects in playback order.
     """
@@ -302,6 +427,8 @@ def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_i
             chunk_audio = AudioSegment.from_mp3(assembly_mp3_path)
         except Exception as e:
             print(f"\033[31mError loading MP3 chunk {i}: {e}\033[0m")
+            if failed_chunks is not None:
+                failed_chunks.append(i)
             continue
 
         yield chunk_audio
@@ -310,7 +437,28 @@ def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_i
         if i in chapter_end_chunk_indices:
             yield AudioSegment.silent(duration=2000, frame_rate=chunk_audio.frame_rate)
 
-def export_mp3_streaming(segments, mp3_output_path, bitrate="48k"):
+def print_duration(mp3_path):
+    """
+    Print the total duration of the finished audiobook as HH:MM:SS, using the
+    same ffprobe query documented in the README (just run automatically
+    instead of by hand, and formatted in Python instead of piping into awk).
+
+    :param mp3_path: Path to the finished MP3 file.
+    """
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-i", mp3_path, "-show_entries", "format=duration", "-v", "quiet", "-of", "csv=p=0"],
+            capture_output=True, text=True, check=True,
+        )
+        total_seconds = int(float(result.stdout.strip()))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        # Cyan text, same as the "assembled" message above it
+        print(f"\033[36mDuration: {hours:02d}:{minutes:02d}:{seconds:02d}\033[0m")
+    except Exception as e:
+        print(f"\033[31mError determining audiobook duration: {e}\033[0m")
+
+def export_mp3_streaming(segments, mp3_output_path, bitrate="48k", metadata=None, cover_path=None):
     """
     Encode an iterable of AudioSegments into a single MP3 by piping raw PCM
     straight into ffmpeg.
@@ -325,6 +473,11 @@ def export_mp3_streaming(segments, mp3_output_path, bitrate="48k"):
     :param mp3_output_path: Path of the MP3 file to write.
     :param bitrate: MP3 bitrate passed to libmp3lame (default: "48k", matching the 48 kbps CBR that edge-tts
                     delivers for the individual chunks).
+    :param metadata: Optional dict of ID3 tags to write (e.g. "title", "artist",
+                    "album", "track", "language", "comment"). Passed straight
+                    to ffmpeg's -metadata option, one key at a time.
+    :param cover_path: Optional path to a cover image file. If given, it's added
+                    as a second input and embedded as the MP3's attached picture.
     """
     stream = iter(segments)
     try:
@@ -336,16 +489,23 @@ def export_mp3_streaming(segments, mp3_output_path, bitrate="48k"):
     frame_rate = first.frame_rate
     channels = first.channels
 
-    ffmpeg_process = subprocess.Popen(
-        [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            "-f", "s16le", "-ar", str(frame_rate), "-ac", str(channels),
-            "-i", "pipe:0",
-            "-c:a", "libmp3lame", "-b:a", bitrate,
-            mp3_output_path,
-        ],
-        stdin=subprocess.PIPE,
-    )
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-f", "s16le", "-ar", str(frame_rate), "-ac", str(channels),
+        "-i", "pipe:0",
+    ]
+
+    if cover_path:
+        cmd += ["-i", cover_path, "-map", "0:a", "-map", "1:v", "-c:v", "copy", "-disposition:v", "attached_pic"]
+
+    cmd += ["-c:a", "libmp3lame", "-b:a", bitrate]
+
+    for key, value in (metadata or {}).items():
+        cmd += ["-metadata", f"{key}={value}"]
+
+    cmd += ["-id3v2_version", "3", mp3_output_path]
+
+    ffmpeg_process = subprocess.Popen(cmd, stdin=subprocess.PIPE)
 
     try:
         for segment in itertools.chain([first], stream):
@@ -363,7 +523,7 @@ def export_mp3_streaming(segments, mp3_output_path, bitrate="48k"):
     if return_code != 0:
         raise RuntimeError(f"ffmpeg exited with code {return_code}")
 
-def chapters_to_mp3(language, voice, marker_voice, chapters, base_name):
+def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata=None, cover_item=None):
     """
     Convert chapters into speech and combine them into a single MP3 file.
 
@@ -372,6 +532,11 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name):
     :param marker_voice: Edge-TTS voice name for chapter end markers.
     :param chapters: List of chapters, each containing text to be converted to speech.
     :param base_name: Base filename for output files (no extension).
+    :param metadata: Optional dict of ID3 tags from epub_metadata_for_mp3(), passed
+                    straight through to export_mp3_streaming().
+    :param cover_item: Optional ebooklib item holding the cover image, from
+                    epub_metadata_for_mp3(). Written to a temporary file next to
+                    the chunk MP3s for the duration of the export, then removed.
     """
     output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")   # Output directory for audio files
 
@@ -417,8 +582,13 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name):
                 local_chunk_counter += 1
                 global_chunk_counter += 1
 
-            # Add an audio marker for end of chapter
+            # Add an audio marker for end of chapter. chapters[0] is always the
+            # version_intro inserted by main(), not a real book chapter, so it's
+            # numbered separately here rather than counted as "chapter 1" -- an
+            # off-by-one that used to make every real chapter's marker announce
+            # one number too high.
             marker_mp3_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.mp3")
+            display_number = chapter_index - 1
 
             if chapter_index < len(chapters):
                 next_chapter = chapters[chapter_index]
@@ -427,35 +597,32 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name):
                 duration_str = format_duration(estimated_minutes, language)
 
                 if language.lower() == "de":
-                    marker_text = (
-                        f"Ende des Kapitels {chapter_index}. "
-                        f"Das nächste Kapitel dauert etwa {duration_str}."
-                    )
+                    this_part = "Ende der Einleitung" if display_number == 0 else f"Ende des Kapitels {display_number}"
+                    marker_text = f"{this_part}. Das nächste Kapitel dauert etwa {duration_str}."
                 else:
-                    marker_text = (
-                        f"End of chapter {chapter_index}. "
-                        f"The next chapter will take about {duration_str}."
-                    )
+                    this_part = "End of the introduction" if display_number == 0 else f"End of chapter {display_number}"
+                    marker_text = f"{this_part}. The next chapter will take about {duration_str}."
             else:
                 if language.lower() == "de":
-                    marker_text = f"Ende des Kapitels {chapter_index}"
+                    marker_text = "Ende der Einleitung" if display_number == 0 else f"Ende des Kapitels {display_number}"
                 else:
-                    marker_text = f"End of chapter {chapter_index}"
+                    marker_text = "End of the introduction" if display_number == 0 else f"End of chapter {display_number}"
 
             # Markers also retry indefinitely
             if os.path.exists(marker_mp3_path):
                 # Bright blue text
-                print(f"\033[94m        Reused chapter {chapter_index} end marker as chunk {global_chunk_counter}\033[0m")
+                print(f"\033[94m        Reused chapter {display_number} end marker as chunk {global_chunk_counter}\033[0m")
             else:
                 await synthesize_chunk_safe(marker_text, marker_mp3_path, marker_voice)
 
                 # Bright green text
-                print(f"\033[92m        Saved chapter {chapter_index} end marker as chunk {global_chunk_counter}\033[0m")
+                print(f"\033[92m        Saved chapter {display_number} end marker as chunk {global_chunk_counter}\033[0m")
 
             chapter_end_chunk_indices.append(global_chunk_counter)
             global_chunk_counter += 1
 
     export_succeeded = False
+    cover_path = None
 
     try:
         asyncio.run(process())
@@ -465,18 +632,48 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name):
         mp3_output_path = os.path.join(output_dir, base_name + ".mp3")
         marker_indices = set(chapter_end_chunk_indices)
 
+        if cover_item is not None:
+            # Media-type-based extension; ffmpeg identifies the image format
+            # from its content anyway, but a sensible extension avoids confusion
+            # if this temp file is ever inspected mid-run.
+            cover_ext = {"image/jpeg": ".jpg", "image/png": ".png"}.get(cover_item.media_type, ".img")
+            cover_path = os.path.join(output_dir, f"{base_name}_cover{cover_ext}")
+            try:
+                with open(cover_path, "wb") as cover_file:
+                    cover_file.write(cover_item.get_content())
+            except Exception as e:
+                print(f"\033[31mError writing temporary cover file '{cover_path}': {e}\033[0m")
+                cover_path = None
+
         try:
+            failed_chunks = []
             export_mp3_streaming(
-                iter_audio_segments(output_dir, base_name, global_chunk_counter, marker_indices),
+                iter_audio_segments(output_dir, base_name, global_chunk_counter, marker_indices, failed_chunks=failed_chunks),
                 mp3_output_path,
+                metadata=metadata,
+                cover_path=cover_path,
             )
             export_succeeded = True
             # Cyan text
             print(f"\033[36mAudiobook assembled and saved to: {mp3_output_path}\033[0m")
+
+            if failed_chunks:
+                missing_markers = [i for i in failed_chunks if i in marker_indices]
+                print(f"\033[31mWarning: {len(failed_chunks)} chunk(s) failed to load and are MISSING from the final audio: {failed_chunks}\033[0m")
+                if missing_markers:
+                    print(f"\033[31mThis includes {len(missing_markers)} chapter-end marker(s) (and the silence after them), so a chapter boundary was skipped silently in the output.\033[0m")
+
+            print_duration(mp3_output_path)
         except Exception as e:
             print(f"\033[31mError exporting MP3 file '{mp3_output_path}': {e}\033[0m")
 
     finally:
+        if cover_path and os.path.exists(cover_path):
+            try:
+                os.remove(cover_path)
+            except Exception as e:
+                print(f"\033[31mError deleting temporary cover file '{cover_path}': {e}\033[0m")
+
         if not export_succeeded:
             # Yellow text: keeping the chunks lets the next run resume instead of starting over
             print(f"\033[33mRun did not finish. Keeping temporary MP3 chunks in '{output_dir}' so the next run can resume.\033[0m")
@@ -522,12 +719,14 @@ def main():
 
     # Add version of script as first chapter
     if args.language.lower() == "de":
-        version_intro = f"Version zwei drei eins der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
+        version_intro = f"Version drei null null der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
     else:
-        version_intro = f"Version two three one of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
+        version_intro = f"Version three zero zero of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
     chapters.insert(0, version_intro)
 
-    chapters_to_mp3(args.language, args.voice, args.marker_voice, chapters, base_name)
+    metadata, cover_item = epub_metadata_for_mp3(args.epub_path)
+
+    chapters_to_mp3(args.language, args.voice, args.marker_voice, chapters, base_name, metadata=metadata, cover_item=cover_item)
 
 # Run main() if script is called directly
 if __name__ == "__main__":
