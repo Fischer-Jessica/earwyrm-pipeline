@@ -329,16 +329,19 @@ def clean_text(text, language):
     try:
         # Replace various types of quotes with standard ASCII quotes
         text = text.replace("«", '"').replace("»", '"')
-        text = text.replace("„", '"').replace("“", '"')
+        text = text.replace("„", '"').replace("“", '"').replace("”", '"')
         text = text.replace("‘", "'").replace("’", "'")
 
         # En/em dashes, ellipses and semicolons carry pause information, so map
-        # them onto a comma (e.g. "zögerte – dann" becoming "zögerte  dann").
+        # them onto a comma (e.g. "zögerte – dann" becoming "zögerte, dann").
         # Any surrounding whitespace is absorbed into the substitution so this
         # doesn't leave a stray space before the comma.
         text = re.sub(r'\s*[–—]\s*', ', ', text)
         text = re.sub(r'\s*…\s*', ', ', text)
         text = re.sub(r'\s*;\s*', ', ', text)
+
+        # Hyphen before a closing quote is read aloud as "dash"; use a pause: "I-" -> "I,"
+        text = re.sub(r'\s*-+(?=")', ',', text)
 
         # Keep any Unicode letter or digit (not just ASCII plus German
         # umlauts) so accented proper names like "José" or "François" survive
@@ -719,9 +722,9 @@ def main():
 
     # Add version of script as first chapter
     if args.language.lower() == "de":
-        version_intro = f"Version drei null null der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
+        version_intro = f"Version drei null eins der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
     else:
-        version_intro = f"Version three zero zero of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
+        version_intro = f"Version three zero one of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
     chapters.insert(0, version_intro)
 
     metadata, cover_item = epub_metadata_for_mp3(args.epub_path)

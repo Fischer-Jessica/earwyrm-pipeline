@@ -3,6 +3,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1] - 05-10-2026
+### Fixed
+- a hyphen directly before a quote mark (e.g. interrupted speech like `"I-"`) is no longer read aloud as "dash" by edge-tts, since it is now mapped to a comma
+- closing curly quotes (”) are now converted to straight quotes instead of being silently stripped by the character allowlist
+- importing `pydub` no longer fails on Python 3.13 and newer, since the removed `audioop` module is now provided by `audioop-lts`
+
 ## [3.0.0] - 02-09-2026
 ### Added
 - book metadata (title, author, language, series, series index, source, custom Ordner/Version fields) and cover art are embedded into the finished MP3, read from the EPUB
