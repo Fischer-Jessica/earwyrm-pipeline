@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 05-10-2026
+### Changed
+- chapter duration estimates use a per-language words-per-minute rate (de: 157, en: 173, the latter measured on a 29-hour English audiobook) and round to the nearest minute instead of always rounding up
+
 ## [3.0.1] - 05-10-2026
 ### Fixed
 - a hyphen directly before a quote mark (e.g. interrupted speech like `"I-"`) is no longer read aloud as "dash" by edge-tts, since it is now mapped to a comma

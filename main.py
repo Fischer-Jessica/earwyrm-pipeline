@@ -370,6 +370,11 @@ def clean_text(text, language):
         print(f"\033[31mError cleaning text: {e}\033[0m")
         return text
 
+# Measured words per minute of the finished audio (including chapter markers).
+# The "en" value was measured on a 29-hour audiobook narrated with en-GB-RyanNeural;
+# the rate depends on the voice, so other voices may deviate somewhat.
+_WORDS_PER_MINUTE = {"de": 157, "en": 173}
+
 def format_duration(estimated_minutes, language):
     """
     Format a duration in minutes into a human-readable string with hours and minutes.
@@ -596,7 +601,7 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
             if chapter_index < len(chapters):
                 next_chapter = chapters[chapter_index]
                 word_count = len(next_chapter.split())
-                estimated_minutes = max(1, math.ceil(word_count / 157))
+                estimated_minutes = max(1, round(word_count / _WORDS_PER_MINUTE[language.lower()]))
                 duration_str = format_duration(estimated_minutes, language)
 
                 if language.lower() == "de":
@@ -722,9 +727,9 @@ def main():
 
     # Add version of script as first chapter
     if args.language.lower() == "de":
-        version_intro = f"Version drei null eins der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
+        version_intro = f"Version drei eins null der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
     else:
-        version_intro = f"Version three zero one of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
+        version_intro = f"Version three one zero of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
     chapters.insert(0, version_intro)
 
     metadata, cover_item = epub_metadata_for_mp3(args.epub_path)
