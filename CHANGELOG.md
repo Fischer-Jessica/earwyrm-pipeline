@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 06-10-2026
+### Added
+- automatic generation of audiobook covers, combining the original EPUB cover with the Earwyrm Pipeline logo, pipeline version and audiobook duration
+
+### Fixed
+- MP3 language metadata now uses the full language name (`English`/`German`) instead of the EPUB language code (`en`/`de`)
+
 ## [3.1.0] - 05-10-2026
 ### Changed
 - chapter duration estimates use a per-language words-per-minute rate (de: 157, en: 173, the latter measured on a 29-hour English audiobook) and round to the nearest minute instead of always rounding up

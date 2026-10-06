@@ -4,4 +4,5 @@ beautifulsoup4==4.14.3
 EbookLib==0.20
 edge-tts==7.2.7
 lxml==6.0.2
+Pillow==12.3.0
 pydub==0.25.1

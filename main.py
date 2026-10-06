@@ -15,6 +15,26 @@ from bs4 import BeautifulSoup   # To parse and clean up HTML content from EPUB
 from bs4 import Tag   # For handling HTML tags in BeautifulSoup
 import re   # Regular expressions for text processing
 
+from cover import make_cover   # To compose the audiobook cover (book cover + logo strip + version and duration)
+
+VERSION = "3.2.0"   # Single source of truth: spoken in the intro and shown on the cover
+
+_SPOKEN_DIGITS = {
+    "de": ["null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun"],
+    "en": ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"],
+}
+
+def spoken_version(language):
+    """
+    Spell out VERSION digit by digit for the intro.
+
+    :param language: Language code ('de' or 'en').
+
+    :return: The spoken version string.
+    """
+    digits = _SPOKEN_DIGITS[language.lower()]
+    return " ".join(digits[int(digit)] for part in VERSION.split(".") for digit in part)
+
 async def synthesize_chunk(text, output_path, voice):
     """
     Synthesize a single text chunk to an MP3 file using edge-tts.
@@ -70,9 +90,9 @@ def epub_to_chapters(epub_path):
     Extract chapters from an EPUB by splitting text between <h1> and <h2> headings.
 
     Documents are walked in spine order (the book's actual reading order),
-    not manifest order, since nothing guarantees the two agree. Spine
-    entries marked non-linear and the navigation document are skipped, since
-    neither is narratable chapter content.
+    not manifest order, since nothing guarantees the two agree. Spine entries
+    marked non-linear and the navigation document are skipped, since neither
+    is narratable chapter content.
 
     :param epub_path: Path to the EPUB file.
 
@@ -181,7 +201,11 @@ def epub_metadata_for_mp3(epub_path):
 
     language = first('DC', 'language')
     if language:
-        metadata['language'] = language
+        language_names = {
+            "de": "German",
+            "en": "English",
+        }
+        metadata['language'] = language_names.get(language.lower(), language)
 
     source = first('DC', 'source')
     if source:
@@ -451,7 +475,9 @@ def print_duration(mp3_path):
     same ffprobe query documented in the README (just run automatically
     instead of by hand, and formatted in Python instead of piping into awk).
 
-    :param mp3_path: Path to the finished MP3 file.
+    :param mp3_path: Path to the finished audiobook.
+
+    :return: The duration as "HH:MM:SS", or None if it could not be determined.
     """
     try:
         result = subprocess.run(
@@ -462,9 +488,36 @@ def print_duration(mp3_path):
         hours, remainder = divmod(total_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         # Cyan text, same as the "assembled" message above it
-        print(f"\033[36mDuration: {hours:02d}:{minutes:02d}:{seconds:02d}\033[0m")
+        duration = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        print(f"\033[36mDuration: {duration}\033[0m")
+        return duration
     except Exception as e:
         print(f"\033[31mError determining audiobook duration: {e}\033[0m")
+        return None
+
+def replace_cover_art(mp3_path, cover_path):
+    """
+    Replace the cover art of an existing MP3 in place without re-encoding and
+    without touching its other metadata (same approach as the README's ffmpeg
+    one-liner). The audio is copied into a temporary file first, which only
+    replaces the original once ffmpeg has succeeded.
+
+    :param mp3_path: Path to the MP3 file.
+    :param cover_path: Path to the new cover image.
+    """
+    temp_path = os.path.splitext(mp3_path)[0] + ".tmp.mp3"
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-i", mp3_path, "-i", cover_path,
+        "-map", "0:a", "-map", "1:v", "-c", "copy", "-map_metadata", "0",
+        "-disposition:v", "attached_pic", "-id3v2_version", "3", temp_path,
+    ]
+    try:
+        subprocess.run(cmd, check=True)
+        os.replace(temp_path, mp3_path)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 def export_mp3_streaming(segments, mp3_output_path, bitrate="48k", metadata=None, cover_path=None):
     """
@@ -482,10 +535,10 @@ def export_mp3_streaming(segments, mp3_output_path, bitrate="48k", metadata=None
     :param bitrate: MP3 bitrate passed to libmp3lame (default: "48k", matching the 48 kbps CBR that edge-tts
                     delivers for the individual chunks).
     :param metadata: Optional dict of ID3 tags to write (e.g. "title", "artist",
-                    "album", "track", "language", "comment"). Passed straight
-                    to ffmpeg's -metadata option, one key at a time.
+                     "album", "track", "language", "comment"). Passed straight
+                     to ffmpeg's -metadata option, one key at a time.
     :param cover_path: Optional path to a cover image file. If given, it's added
-                    as a second input and embedded as the MP3's attached picture.
+                       as a second input and embedded as the MP3's attached picture.
     """
     stream = iter(segments)
     try:
@@ -537,16 +590,16 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
 
     :param language: Language code ('de' or 'en') for the text-to-speech model.
     :param voice: Edge-TTS voice name for main narration.
-    :param marker_voice: Edge-TTS voice name for chapter end markers.
+    :param marker_voice: Edge-TTS voice name for markers.
     :param chapters: List of chapters, each containing text to be converted to speech.
     :param base_name: Base filename for output files (no extension).
     :param metadata: Optional dict of ID3 tags from epub_metadata_for_mp3(), passed
-                    straight through to export_mp3_streaming().
+                     straight through to export_mp3_streaming().
     :param cover_item: Optional ebooklib item holding the cover image, from
-                    epub_metadata_for_mp3(). Written to a temporary file next to
-                    the chunk MP3s for the duration of the export, then removed.
+                       epub_metadata_for_mp3(). Written to a temporary file next
+                       to the chunk MP3s for the duration of the export, then removed.
     """
-    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")   # Output directory for audio files
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 
     try:
         os.makedirs(output_dir, exist_ok=True)
@@ -592,9 +645,7 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
 
             # Add an audio marker for end of chapter. chapters[0] is always the
             # version_intro inserted by main(), not a real book chapter, so it's
-            # numbered separately here rather than counted as "chapter 1" -- an
-            # off-by-one that used to make every real chapter's marker announce
-            # one number too high.
+            # numbered separately here rather than counted as "chapter 1".
             marker_mp3_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.mp3")
             display_number = chapter_index - 1
 
@@ -631,6 +682,7 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
 
     export_succeeded = False
     cover_path = None
+    generated_cover_path = None
 
     try:
         asyncio.run(process())
@@ -641,9 +693,6 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
         marker_indices = set(chapter_end_chunk_indices)
 
         if cover_item is not None:
-            # Media-type-based extension; ffmpeg identifies the image format
-            # from its content anyway, but a sensible extension avoids confusion
-            # if this temp file is ever inspected mid-run.
             cover_ext = {"image/jpeg": ".jpg", "image/png": ".png"}.get(cover_item.media_type, ".img")
             cover_path = os.path.join(output_dir, f"{base_name}_cover{cover_ext}")
             try:
@@ -656,12 +705,19 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
         try:
             failed_chunks = []
             export_mp3_streaming(
-                iter_audio_segments(output_dir, base_name, global_chunk_counter, marker_indices, failed_chunks=failed_chunks),
+                iter_audio_segments(
+                    output_dir,
+                    base_name,
+                    global_chunk_counter,
+                    marker_indices,
+                    failed_chunks=failed_chunks
+                ),
                 mp3_output_path,
                 metadata=metadata,
                 cover_path=cover_path,
             )
             export_succeeded = True
+
             # Cyan text
             print(f"\033[36mAudiobook assembled and saved to: {mp3_output_path}\033[0m")
 
@@ -671,19 +727,31 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                 if missing_markers:
                     print(f"\033[31mThis includes {len(missing_markers)} chapter-end marker(s) (and the silence after them), so a chapter boundary was skipped silently in the output.\033[0m")
 
-            print_duration(mp3_output_path)
+            duration = print_duration(mp3_output_path)
+
+            # The duration is only known now, so the generated cover replaces the book's own cover afterwards.
+            # If this fails, the MP3 simply keeps the original cover.
+            if duration:
+                generated_cover_path = os.path.join(output_dir, f"{base_name}_cover_generated.png")
+                try:
+                    make_cover(cover_path, VERSION, duration, generated_cover_path)
+                    replace_cover_art(mp3_output_path, generated_cover_path)
+                    print(f"\033[36mCover generated and embedded\033[0m")
+                except Exception as e:
+                    print(f"\033[31mError generating or embedding the cover (the original cover was kept): {e}\033[0m")
         except Exception as e:
             print(f"\033[31mError exporting MP3 file '{mp3_output_path}': {e}\033[0m")
 
     finally:
-        if cover_path and os.path.exists(cover_path):
-            try:
-                os.remove(cover_path)
-            except Exception as e:
-                print(f"\033[31mError deleting temporary cover file '{cover_path}': {e}\033[0m")
+        for temp_cover in (cover_path, generated_cover_path):
+            if temp_cover and os.path.exists(temp_cover):
+                try:
+                    os.remove(temp_cover)
+                except Exception as e:
+                    print(f"\033[31mError deleting temporary cover file '{temp_cover}': {e}\033[0m")
 
         if not export_succeeded:
-            # Yellow text: keeping the chunks lets the next run resume instead of starting over
+            # Yellow text: keeping chunks lets the next run resume instead of starting over
             print(f"\033[33mRun did not finish. Keeping temporary MP3 chunks in '{output_dir}' so the next run can resume.\033[0m")
         else:
             # Gray text
@@ -706,11 +774,12 @@ def main():
     """
     parser = argparse.ArgumentParser(description="Convert EPUB to TTS audio")
     parser.add_argument("epub_path", help="Path to the EPUB file")
-    parser.add_argument("language", choices=["de", "en"], help="Language code (de or en)")
+    parser.add_argument("language", type=str.lower,choices=["de", "en"], metavar="{de,en}", help="Language code of the book")
     parser.add_argument("voice", help="Edge-TTS voice for main narration (see https://tts.travisvn.com for options)")
     parser.add_argument("marker_voice", help="Edge-TTS voice for markers (see https://tts.travisvn.com for options)")
 
     args = parser.parse_args()
+    language = args.language
 
     # Check if EPUB file exists
     if not os.path.isfile(args.epub_path):
@@ -726,15 +795,24 @@ def main():
         return
 
     # Add version of script as first chapter
-    if args.language.lower() == "de":
-        version_intro = f"Version drei eins null der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
+    if language == "de":
+        version_intro = f"Version {spoken_version(language)} der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
     else:
-        version_intro = f"Version three one zero of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
+        version_intro = f"Version {spoken_version(language)} of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
+
     chapters.insert(0, version_intro)
 
     metadata, cover_item = epub_metadata_for_mp3(args.epub_path)
 
-    chapters_to_mp3(args.language, args.voice, args.marker_voice, chapters, base_name, metadata=metadata, cover_item=cover_item)
+    chapters_to_mp3(
+        language,
+        args.voice,
+        args.marker_voice,
+        chapters,
+        base_name,
+        metadata=metadata,
+        cover_item=cover_item
+    )
 
 # Run main() if script is called directly
 if __name__ == "__main__":
