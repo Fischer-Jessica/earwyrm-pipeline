@@ -3,6 +3,7 @@ import os   # For environment variables and file path operations
 import argparse   # For parsing command-line arguments
 import subprocess   # For piping raw PCM directly into ffmpeg
 import itertools   # For chaining the first segment back onto the generator
+import time   # For measuring elapsed time and estimating the remaining runtime
 
 import asyncio   # For running async edge-tts synthesis
 import aiohttp   # For handling edge-tts connection errors
@@ -17,7 +18,7 @@ import re   # Regular expressions for text processing
 
 from cover import make_cover   # To compose the audiobook cover (book cover + logo strip + version and duration)
 
-VERSION = "3.3.0"   # Single source of truth: spoken in the intro and shown on the cover
+VERSION = "3.3.1"   # Single source of truth: spoken in the intro and shown on the cover
 
 _SPOKEN_DIGITS = {
     "de": ["null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun"],
@@ -64,6 +65,8 @@ async def synthesize_chunk_safe(text, output_path, voice, max_wait=60):
     :param output_path: File path where the MP3 will be saved.
     :param voice: Edge-TTS voice name.
     :param max_wait: Maximum wait time in seconds between retries (default: 60).
+
+    :return: The number of failed attempts before synthesis succeeded (0 if it worked first time).
     """
     attempt = 0
     while True:
@@ -72,7 +75,7 @@ async def synthesize_chunk_safe(text, output_path, voice, max_wait=60):
             if attempt > 0:
                 # Yellow text — recovered after retries
                 print(f"\033[33m            Recovered after {attempt} retries: {text[:50]}...\033[0m")
-            return
+            return attempt
         except (edge_tts.exceptions.NoAudioReceived, aiohttp.client_exceptions.WSServerHandshakeError) as e:
             attempt += 1
             wait_time = min(2 ** (attempt - 1), max_wait)  # 1s, 2s, 4s, 8s, ... capped at max_wait
@@ -463,7 +466,91 @@ def chapter_title(chapter, language, max_length=150):
     title = title.strip().rstrip(".,:!?").strip()
     return title or None
 
-def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_indices, failed_chunks=None, chapter_start_chunk_indices=None):
+def format_clock(seconds):
+    """
+    Format a number of seconds as HH:MM:SS for progress output.
+
+    :param seconds: Duration in seconds (int or float).
+
+    :return: The formatted duration, e.g. "01:02:03".
+    """
+    total_seconds = max(0, int(round(seconds)))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+class ProgressTracker:
+    """
+    Keep track of the overall synthesis progress across all chapters.
+
+    Every audio chunk (narration, chapter start marker or chapter end marker)
+    counts as one unit. The ETA is extrapolated from the average time newly
+    synthesized chunks took so far. Chunks already present from an earlier,
+    interrupted run are counted up front and excluded from the ETA, since
+    reusing them takes no time.
+    """
+
+    def __init__(self, total, already_present):
+        """
+        :param total: Total number of chunks this run will produce.
+        :param already_present: Number of those chunks that already exist on disk.
+        """
+        self.total = total
+        self.pending_reuse = already_present
+        self.done = 0
+        self.synthesized = 0
+        self.reused = 0
+        self.retries = 0
+        self.synthesis_seconds = 0.0
+        self.started = time.monotonic()
+
+    def record_reused(self):
+        """Record a chunk that was reused from an earlier run."""
+        self.done += 1
+        self.reused += 1
+        self.pending_reuse = max(0, self.pending_reuse - 1)
+
+    def record_synthesized(self, seconds, retries=0):
+        """
+        Record a newly synthesized chunk.
+
+        :param seconds: Wall-clock time spent on this chunk, including retries and pauses.
+        :param retries: Number of failed attempts before it succeeded.
+        """
+        self.done += 1
+        self.synthesized += 1
+        self.retries += retries
+        self.synthesis_seconds += seconds
+
+    def eta_seconds(self):
+        """
+        :return: Estimated seconds until all chunks are synthesized, or None
+                 if nothing has been synthesized yet to base an estimate on.
+        """
+        if self.synthesized == 0:
+            return None
+        remaining = max(0, self.total - self.done - self.pending_reuse)
+        return remaining * self.synthesis_seconds / self.synthesized
+
+    def prefix(self):
+        """
+        :return: A progress prefix like "[ 123/4567   2.7% | ETA 01:23:45]".
+        """
+        percent = 100.0 * self.done / self.total if self.total else 100.0
+        eta = self.eta_seconds()
+        eta_text = format_clock(eta) if eta is not None else "--:--:--"
+        width = len(str(self.total))
+        return f"[{self.done:>{width}}/{self.total} {percent:5.1f}% | ETA {eta_text}]"
+
+    def summary(self):
+        """
+        :return: A one-line summary of the synthesis phase.
+        """
+        elapsed = format_clock(time.monotonic() - self.started)
+        return (f"Synthesis finished after {elapsed}: {self.synthesized} chunk(s) synthesized, "
+                f"{self.reused} reused, {self.retries} retry(s)")
+
+def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_indices, failed_chunks=None, chapter_start_chunk_indices=None, show_progress=False):
     """
     Yield the chunk MP3s one at a time as AudioSegments, inserting 2 seconds of
     silence after every end-of-chapter marker and 1 second of silence after
@@ -481,10 +568,18 @@ def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_i
                     in the final audio instead of it passing unnoticed.
     :param chapter_start_chunk_indices: Optional set of chunk indices that are
                     chapter start markers.
+    :param show_progress: If True, print the assembly progress in steps of 10%.
 
     :return: AudioSegment objects in playback order.
     """
+    chunk_count = total_chunks - 1
+    progress_step = max(1, chunk_count // 10)
+
     for i in range(1, total_chunks):
+        if show_progress and (i % progress_step == 0 or i == chunk_count):
+            # Gray text
+            print(f"\033[37m    Assembling: {i}/{chunk_count} chunks ({100.0 * i / chunk_count:.0f}%)\033[0m")
+
         assembly_mp3_path = os.path.join(output_dir, f"{base_name}_chunk_{i}.mp3")
         try:
             chunk_audio = AudioSegment.from_mp3(assembly_mp3_path)
@@ -643,6 +738,24 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
         print(f"\033[31mError creating output directory '{output_dir}': {e}\033[0m")
         return
 
+    # Clean and split every chapter up front, so the total number of chunks
+    # (and thereby the overall progress) is known before synthesis starts.
+    chapter_chunks = [split_text_into_chunks(clean_text(chapter, language), max_length=500) for chapter in chapters]
+
+    # Narration chunks + one start marker per real chapter (not the intro) + one end marker per chapter
+    total_units = sum(len(text_chunks) for text_chunks in chapter_chunks) + (len(chapters) - 1) + len(chapters)
+    already_present = sum(
+        1 for i in range(1, total_units + 1)
+        if os.path.exists(os.path.join(output_dir, f"{base_name}_chunk_{i}.mp3"))
+    )
+    progress = ProgressTracker(total_units, already_present)
+
+    # Cyan text
+    plan = f"Plan: introduction + {len(chapters) - 1} chapter(s), {total_units} audio chunks including markers"
+    if already_present:
+        plan += f", {already_present} already present from a previous run"
+    print(f"\033[36m{plan}\033[0m")
+
     global_chunk_counter = 1
     chapter_end_chunk_indices = []
     chapter_start_chunk_indices = []
@@ -651,8 +764,7 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
         nonlocal global_chunk_counter
 
         for chapter_index, chapter in enumerate(chapters, start=1):
-            cleaned_chapter = clean_text(chapter, language)
-            text_chunks = split_text_into_chunks(cleaned_chapter, max_length=500)
+            text_chunks = chapter_chunks[chapter_index - 1]
             local_chunk_counter = 1
 
             # chapters[0] is always the version_intro inserted by main(), not a
@@ -660,8 +772,14 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
             # counted as "chapter 1".
             display_number = chapter_index - 1
 
+            if display_number == 0:
+                part_label = "introduction"
+            else:
+                title = chapter_title(chapter, language)
+                part_label = f"chapter {display_number}" + (f": {title}" if title else "")
+
             # Magenta text
-            print(f"\033[35m    Processing chapter {chapter_index}/{len(chapters)} with {len(text_chunks)} chunks\033[0m")
+            print(f"\033[35m{progress.prefix()}     Processing chapter {chapter_index}/{len(chapters)} ({part_label}) with {len(text_chunks)} chunks\033[0m")
 
             # Add an audio marker for start of chapter. The introduction gets
             # none, since it isn't a book chapter and opens the audiobook anyway.
@@ -675,13 +793,16 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
 
                 # Start markers retry indefinitely, too
                 if os.path.exists(start_marker_mp3_path):
+                    progress.record_reused()
                     # Bright blue text
-                    print(f"\033[94m        Reused chapter {display_number} start marker as chunk {global_chunk_counter}\033[0m")
+                    print(f"\033[94m{progress.prefix()}         Reused chapter {display_number} start marker as chunk {global_chunk_counter}\033[0m")
                 else:
-                    await synthesize_chunk_safe(start_marker_text, start_marker_mp3_path, marker_voice)
+                    started = time.monotonic()
+                    retries = await synthesize_chunk_safe(start_marker_text, start_marker_mp3_path, marker_voice)
+                    progress.record_synthesized(time.monotonic() - started, retries)
 
                     # Bright green text
-                    print(f"\033[92m        Saved chapter {display_number} start marker as chunk {global_chunk_counter}\033[0m")
+                    print(f"\033[92m{progress.prefix()}         Saved chapter {display_number} start marker as chunk {global_chunk_counter}\033[0m")
 
                 chapter_start_chunk_indices.append(global_chunk_counter)
                 global_chunk_counter += 1
@@ -693,18 +814,21 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                 # Reuse chunks from an interrupted run. Thanks to the atomic write in
                 # synthesize_chunk, an existing file is guaranteed to be complete.
                 if os.path.exists(chunk_mp3_path):
+                    progress.record_reused()
                     # Blue text
-                    print(f"\033[34m            Reused chunk {local_chunk_counter} of {len(text_chunks)} for chapter {chapter_index}/{len(chapters)} as chunk {global_chunk_counter}\033[0m")
+                    print(f"\033[34m{progress.prefix()}             Reused chunk {local_chunk_counter} of {len(text_chunks)} for chapter {chapter_index}/{len(chapters)} as chunk {global_chunk_counter}\033[0m")
                     local_chunk_counter += 1
                     global_chunk_counter += 1
                     continue
 
                 # synthesize_chunk_safe retries indefinitely so that no chunks will be skipped
-                await synthesize_chunk_safe(chunk, chunk_mp3_path, voice)
+                started = time.monotonic()
+                retries = await synthesize_chunk_safe(chunk, chunk_mp3_path, voice)
                 await asyncio.sleep(0.5)
+                progress.record_synthesized(time.monotonic() - started, retries)
 
                 # Green text
-                print(f"\033[32m            Saved chunk {local_chunk_counter} of {len(text_chunks)} for chapter {chapter_index}/{len(chapters)} as chunk {global_chunk_counter}\033[0m")
+                print(f"\033[32m{progress.prefix()}             Saved chunk {local_chunk_counter} of {len(text_chunks)} for chapter {chapter_index}/{len(chapters)} as chunk {global_chunk_counter}\033[0m")
                 local_chunk_counter += 1
                 global_chunk_counter += 1
 
@@ -736,13 +860,16 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
 
             # Markers also retry indefinitely
             if os.path.exists(marker_mp3_path):
+                progress.record_reused()
                 # Bright blue text
-                print(f"\033[94m        Reused chapter {display_number} end marker as chunk {global_chunk_counter}\033[0m")
+                print(f"\033[94m{progress.prefix()}         Reused chapter {display_number} end marker as chunk {global_chunk_counter}\033[0m")
             else:
-                await synthesize_chunk_safe(marker_text, marker_mp3_path, marker_voice)
+                started = time.monotonic()
+                retries = await synthesize_chunk_safe(marker_text, marker_mp3_path, marker_voice)
+                progress.record_synthesized(time.monotonic() - started, retries)
 
                 # Bright green text
-                print(f"\033[92m        Saved chapter {display_number} end marker as chunk {global_chunk_counter}\033[0m")
+                print(f"\033[92m{progress.prefix()}         Saved chapter {display_number} end marker as chunk {global_chunk_counter}\033[0m")
 
             chapter_end_chunk_indices.append(global_chunk_counter)
             global_chunk_counter += 1
@@ -753,6 +880,9 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
 
     try:
         asyncio.run(process())
+
+        # Cyan text
+        print(f"\033[36m{progress.summary()}\033[0m")
 
         # Combine all MP3 chunks into a single MP3 audiobook.
         # Streamed chunk by chunk, so neither RAM nor the 4 GiB WAV limit apply.
@@ -772,6 +902,8 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
 
         try:
             failed_chunks = []
+            # Cyan text
+            print(f"\033[36mAssembling audiobook from {global_chunk_counter - 1} chunks...\033[0m")
             export_mp3_streaming(
                 iter_audio_segments(
                     output_dir,
@@ -779,7 +911,8 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                     global_chunk_counter,
                     marker_indices,
                     failed_chunks=failed_chunks,
-                    chapter_start_chunk_indices=start_marker_indices
+                    chapter_start_chunk_indices=start_marker_indices,
+                    show_progress=True
                 ),
                 mp3_output_path,
                 metadata=metadata,
@@ -835,6 +968,9 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                             os.remove(mp3_to_remove)
                     except Exception as e:
                         print(f"\033[31mError deleting temporary file '{mp3_to_remove}': {e}\033[0m")
+
+        # Cyan text
+        print(f"\033[36mTotal runtime: {format_clock(time.monotonic() - progress.started)}\033[0m")
 
 # Command-line entry point
 def main():

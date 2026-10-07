@@ -3,6 +3,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.1] - 07-10-2026
+### Added
+- progress prefix on every status line showing the finished chunks out of the total, the percentage and the estimated remaining time (ETA), chunks reused from an interrupted run are not counted in the ETA
+- plan line at the start with the total number of chunks and how many of them already exist from a previous run
+- summary after the synthesis (synthesized, reused, retries), assembly progress in 10% steps and the total runtime
+
 ## [3.3.0] - 07-10-2026
 ### Added
 - spoken chapter start marker followed by 1 second of silence, the introduction gets none
