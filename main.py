@@ -17,7 +17,7 @@ import re   # Regular expressions for text processing
 
 from cover import make_cover   # To compose the audiobook cover (book cover + logo strip + version and duration)
 
-VERSION = "3.2.0"   # Single source of truth: spoken in the intro and shown on the cover
+VERSION = "3.3.0"   # Single source of truth: spoken in the intro and shown on the cover
 
 _SPOKEN_DIGITS = {
     "de": ["null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun"],
@@ -435,10 +435,39 @@ def format_duration(estimated_minutes, language):
             minute_word = "minute" if minutes == 1 else "minutes"
             return f"{minutes} {minute_word}"
 
-def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_indices, failed_chunks=None):
+def chapter_title(chapter, language, max_length=150):
+    """
+    Return the cleaned title of a chapter for use in navigation markers.
+
+    epub_to_chapters() puts the heading text on the first line of every
+    chapter. A chapter without a heading starts directly with body text
+    instead, so a first line longer than max_length is treated as "no title"
+    rather than reading half a paragraph out in a marker.
+
+    A leading "Kapitel 3:" / "Chapter IV -" (Arabic or Roman numeral) is stripped, since the marker
+    already announces the chapter number itself. If nothing is left after
+    that (e.g. the heading was just "Kapitel 3"), there is no separate title.
+
+    :param chapter: Chapter text as returned by epub_to_chapters().
+    :param language: Language code ('de' or 'en').
+    :param max_length: Maximum length of a first line still treated as a title.
+
+    :return: The title, or None if the chapter has no usable title.
+    """
+    first_line = chapter.split("\n", 1)[0].strip()
+    if not first_line or len(first_line) > max_length:
+        return None
+
+    title = clean_text(first_line, language).strip()
+    title = re.sub(r'^(kapitel|chapter)\s+(\d+|[ivxlcdm]+)\b\s*[:.,-]?\s*', '', title, flags=re.IGNORECASE)
+    title = title.strip().rstrip(".,:!?").strip()
+    return title or None
+
+def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_indices, failed_chunks=None, chapter_start_chunk_indices=None):
     """
     Yield the chunk MP3s one at a time as AudioSegments, inserting 2 seconds of
-    silence after every end-of-chapter marker.
+    silence after every end-of-chapter marker and 1 second of silence after
+    every start-of-chapter marker.
 
     This is a generator on purpose, because so only a single chunk is ever held in memory,
     instead of the whole audiobook.
@@ -450,6 +479,8 @@ def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_i
     :param failed_chunks: Optional list. Any chunk index that fails to load is
                     appended to it, so the caller can warn about a resulting gap
                     in the final audio instead of it passing unnoticed.
+    :param chapter_start_chunk_indices: Optional set of chunk indices that are
+                    chapter start markers.
 
     :return: AudioSegment objects in playback order.
     """
@@ -468,6 +499,11 @@ def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_i
         # Add 2 seconds of silence after end-of-chapter markers
         if i in chapter_end_chunk_indices:
             yield AudioSegment.silent(duration=2000, frame_rate=chunk_audio.frame_rate)
+
+        # Add 1 second of silence after start-of-chapter markers, so the
+        # announcement doesn't run straight into the narration
+        if chapter_start_chunk_indices and i in chapter_start_chunk_indices:
+            yield AudioSegment.silent(duration=1000, frame_rate=chunk_audio.frame_rate)
 
 def print_duration(mp3_path):
     """
@@ -609,6 +645,7 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
 
     global_chunk_counter = 1
     chapter_end_chunk_indices = []
+    chapter_start_chunk_indices = []
 
     async def process():
         nonlocal global_chunk_counter
@@ -618,8 +655,36 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
             text_chunks = split_text_into_chunks(cleaned_chapter, max_length=500)
             local_chunk_counter = 1
 
+            # chapters[0] is always the version_intro inserted by main(), not a
+            # real book chapter, so it's numbered separately rather than
+            # counted as "chapter 1".
+            display_number = chapter_index - 1
+
             # Magenta text
             print(f"\033[35m    Processing chapter {chapter_index}/{len(chapters)} with {len(text_chunks)} chunks\033[0m")
+
+            # Add an audio marker for start of chapter. The introduction gets
+            # none, since it isn't a book chapter and opens the audiobook anyway.
+            if display_number > 0:
+                start_marker_mp3_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.mp3")
+
+                if language.lower() == "de":
+                    start_marker_text = f"Kapitel {display_number}."
+                else:
+                    start_marker_text = f"Chapter {display_number}."
+
+                # Start markers retry indefinitely, too
+                if os.path.exists(start_marker_mp3_path):
+                    # Bright blue text
+                    print(f"\033[94m        Reused chapter {display_number} start marker as chunk {global_chunk_counter}\033[0m")
+                else:
+                    await synthesize_chunk_safe(start_marker_text, start_marker_mp3_path, marker_voice)
+
+                    # Bright green text
+                    print(f"\033[92m        Saved chapter {display_number} start marker as chunk {global_chunk_counter}\033[0m")
+
+                chapter_start_chunk_indices.append(global_chunk_counter)
+                global_chunk_counter += 1
 
             # Convert each text chunk to an MP3 file using edge-tts
             for chunk in text_chunks:
@@ -643,24 +708,26 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                 local_chunk_counter += 1
                 global_chunk_counter += 1
 
-            # Add an audio marker for end of chapter. chapters[0] is always the
-            # version_intro inserted by main(), not a real book chapter, so it's
-            # numbered separately here rather than counted as "chapter 1".
+            # Add an audio marker for end of chapter, announcing the number and
+            # (if available) the title of the next chapter.
             marker_mp3_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.mp3")
-            display_number = chapter_index - 1
 
             if chapter_index < len(chapters):
                 next_chapter = chapters[chapter_index]
                 word_count = len(next_chapter.split())
                 estimated_minutes = max(1, round(word_count / _WORDS_PER_MINUTE[language.lower()]))
                 duration_str = format_duration(estimated_minutes, language)
+                next_number = display_number + 1
+                next_title = chapter_title(next_chapter, language)
 
                 if language.lower() == "de":
                     this_part = "Ende der Einleitung" if display_number == 0 else f"Ende des Kapitels {display_number}"
-                    marker_text = f"{this_part}. Das nächste Kapitel dauert etwa {duration_str}."
+                    up_next = f"Als Nächstes: Kapitel {next_number}" + (f", {next_title}" if next_title else "")
+                    marker_text = f"{this_part}. {up_next}. Das nächste Kapitel dauert etwa {duration_str}."
                 else:
                     this_part = "End of the introduction" if display_number == 0 else f"End of chapter {display_number}"
-                    marker_text = f"{this_part}. The next chapter will take about {duration_str}."
+                    up_next = f"Up next: chapter {next_number}" + (f", {next_title}" if next_title else "")
+                    marker_text = f"{this_part}. {up_next}. The next chapter will take about {duration_str}."
             else:
                 if language.lower() == "de":
                     marker_text = "Ende der Einleitung" if display_number == 0 else f"Ende des Kapitels {display_number}"
@@ -691,6 +758,7 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
         # Streamed chunk by chunk, so neither RAM nor the 4 GiB WAV limit apply.
         mp3_output_path = os.path.join(output_dir, base_name + ".mp3")
         marker_indices = set(chapter_end_chunk_indices)
+        start_marker_indices = set(chapter_start_chunk_indices)
 
         if cover_item is not None:
             cover_ext = {"image/jpeg": ".jpg", "image/png": ".png"}.get(cover_item.media_type, ".img")
@@ -710,7 +778,8 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                     base_name,
                     global_chunk_counter,
                     marker_indices,
-                    failed_chunks=failed_chunks
+                    failed_chunks=failed_chunks,
+                    chapter_start_chunk_indices=start_marker_indices
                 ),
                 mp3_output_path,
                 metadata=metadata,

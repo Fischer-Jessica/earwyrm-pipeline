@@ -3,6 +3,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 07-10-2026
+### Added
+- spoken chapter start marker followed by 1 second of silence, the introduction gets none
+
+### Changed
+- chapter end markers now also announce the number and title of the next chapter, chapters without a heading are announced by their number only
+- the start markers shift the chunk numbering, so an interrupted run of an earlier version can't be resumed with 3.3.0, clear `./output/` before the first run
+
 ## [3.2.0] - 06-10-2026
 ### Added
 - automatic generation of audiobook covers, combining the original EPUB cover with the Earwyrm Pipeline logo, pipeline version and audiobook duration

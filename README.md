@@ -11,8 +11,8 @@
 <p align="center" style="font-family: Doto, monospace;">Your tome hoard, synthesized.</p>
 
 <p align="center">
-  <strong>Current version:</strong> <code>3.2.0</code> &nbsp;|&nbsp;
-  <strong>Last updated:</strong> <code>06-10-2026</code>
+  <strong>Current version:</strong> <code>3.3.0</code> &nbsp;|&nbsp;
+  <strong>Last updated:</strong> <code>07-10-2026</code>
 </p>
 
 ---
@@ -63,7 +63,7 @@ python main.py <epub_path> <language> <voice> <marker_voice>
 - Replace `<epub_path>` with the path to the EPUB file.
 - Replace `<language>` with the desired language code (`en` for English, `de` for German).
 - Replace `<voice>` with the desired Edge-TTS voice for main narration.
-- Replace `<marker_voice>` with the desired Edge-TTS voice for chapter end markers.
+- Replace `<marker_voice>` with the desired Edge-TTS voice for chapter markers.
 
 See [tts.travisvn.com](https://tts.travisvn.com) for available voices.
 
@@ -77,12 +77,12 @@ This command will process the `Eragon.epub` file and read it aloud in German, sa
 
 ## Notes
 - Intermediate `.mp3` files are created in `./output/` during processing and are deleted once the final MP3 has been assembled successfully. If the run is interrupted or fails, they are kept so that interrupted runs can be resumed by running the same command again.
-- When resuming it is vital to use the same parameters as before because existing chunks are not re-synthesised. This could lead to, for example, the voice changing partway through.
+- When resuming it is vital to use the same parameters as before because existing chunks are not re-synthesised. This could lead to, for example, the voice changing partway through. Interrupted runs of versions before 3.3.0 can't be resumed, clear `./output/` before the first run with 3.3.0.
 - Currently only supports `de` (German) and `en` (English), as marker text is only implemented for these two languages.
 - The output file will be named after the EPUB file, with the `.mp3` extension.
 - If the source EPUB has title, creator, language or source metadata, these are automatically embedded into the generated MP3's tags (`title`, `artist`, `language`, `comment`). calibre-style series/series index fields are embedded too, as `album`/`track`. Any custom `Ordner`/`Version` meta fields present are embedded as custom tags as well.
 - If the EPUB has a cover image, it's automatically embedded as the MP3's cover art.
-- The chapter end markers are synthesized using `<marker_voice>`, which is intended to be a different voice from the main narration to make chapter boundaries more distinguishable during playback. The very first marker, after the spoken version/voice announcement, says "End of the introduction" rather than being counted as chapter 1. Every marker after that announces the correct chapter number.
+- The chapter markers (start and end of each chapter) are synthesized using `<marker_voice>`, which is intended to be a different voice from the main narration to make chapter boundaries more distinguishable during playback. The very first marker, after the spoken version/voice announcement, says "End of the introduction" rather than being counted as chapter 1. Every marker after that announces the correct chapter number.
 - If a chunk MP3 fails to load during the final assembly step, it's now reported explicitly with a warning (instead of silently missing from the output). Including whether it was a chapter-end marker, in which case the chapter boundary itself is affected too.
 - The generated MP3's length is now printed automatically at the end of a run. To check the length of any MP3 file manually, you can use the `ffprobe` command:
     ```bash
