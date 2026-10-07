@@ -18,7 +18,7 @@ import re   # Regular expressions for text processing
 
 from cover import make_cover   # To compose the audiobook cover (book cover + logo strip + version and duration)
 
-VERSION = "3.3.1"   # Single source of truth: spoken in the intro and shown on the cover
+VERSION = "3.3.2"   # Single source of truth: spoken in the intro and shown on the cover
 
 _SPOKEN_DIGITS = {
     "de": ["null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun"],
@@ -400,7 +400,54 @@ def clean_text(text, language):
 # Measured words per minute of the finished audio (including chapter markers).
 # The "en" value was measured on a 29-hour audiobook narrated with en-GB-RyanNeural;
 # the rate depends on the voice, so other voices may deviate somewhat.
+# Since 3.3.2 this table is only the fallback until enough narration of the
+# current run has been measured (see estimate_chapter_minutes()).
 _WORDS_PER_MINUTE = {"de": 157, "en": 173}
+
+# edge-tts delivers its chunks as 48 kbps CBR MP3, so a chunk's duration
+# follows directly from its file size, without decoding it.
+_EDGE_TTS_BITS_PER_SECOND = 48000
+
+# Minimum amount of measured narration (in seconds) before the measured rate
+# replaces the _WORDS_PER_MINUTE fallback. Below that, a few short chunks
+# (e.g. only the intro) would make the estimate jumpy.
+_MIN_MEASURED_SECONDS = 120
+
+def mp3_chunk_seconds(mp3_path):
+    """
+    Determine the duration of an edge-tts chunk MP3 from its file size.
+
+    :param mp3_path: Path to the chunk MP3.
+
+    :return: Duration in seconds, or None if the file size could not be read.
+    """
+    try:
+        return os.path.getsize(mp3_path) * 8 / _EDGE_TTS_BITS_PER_SECOND
+    except OSError:
+        return None
+
+def estimate_chapter_minutes(word_count, language, measured_words=0, measured_seconds=0.0):
+    """
+    Estimate how long a chapter will take, based on the narration rate
+    actually measured in the current run if there is enough of it, otherwise
+    on the static _WORDS_PER_MINUTE table.
+
+    :param word_count: Number of words in the chapter.
+    :param language: Language code ('de' or 'en').
+    :param measured_words: Number of narrated words measured so far.
+    :param measured_seconds: Audio duration of those words in seconds.
+
+    :return: A tuple (estimated_minutes, words_per_minute, is_measured).
+    """
+    if measured_seconds >= _MIN_MEASURED_SECONDS and measured_words > 0:
+        words_per_minute = measured_words / (measured_seconds / 60)
+        is_measured = True
+    else:
+        words_per_minute = _WORDS_PER_MINUTE[language.lower()]
+        is_measured = False
+
+    estimated_minutes = max(1, round(word_count / words_per_minute))
+    return estimated_minutes, words_per_minute, is_measured
 
 def format_duration(estimated_minutes, language):
     """
@@ -760,6 +807,18 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
     chapter_end_chunk_indices = []
     chapter_start_chunk_indices = []
 
+    # Narration rate measured in this run (narration chunks only, no markers),
+    # used for the "next chapter takes about ..." announcements
+    measured_words = 0
+    measured_seconds = 0.0
+
+    def measure_chunk(chunk_text, chunk_mp3_path):
+        nonlocal measured_words, measured_seconds
+        seconds = mp3_chunk_seconds(chunk_mp3_path)
+        if seconds:
+            measured_words += len(chunk_text.split())
+            measured_seconds += seconds
+
     async def process():
         nonlocal global_chunk_counter
 
@@ -814,6 +873,7 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                 # Reuse chunks from an interrupted run. Thanks to the atomic write in
                 # synthesize_chunk, an existing file is guaranteed to be complete.
                 if os.path.exists(chunk_mp3_path):
+                    measure_chunk(chunk, chunk_mp3_path)
                     progress.record_reused()
                     # Blue text
                     print(f"\033[34m{progress.prefix()}             Reused chunk {local_chunk_counter} of {len(text_chunks)} for chapter {chapter_index}/{len(chapters)} as chunk {global_chunk_counter}\033[0m")
@@ -826,6 +886,7 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                 retries = await synthesize_chunk_safe(chunk, chunk_mp3_path, voice)
                 await asyncio.sleep(0.5)
                 progress.record_synthesized(time.monotonic() - started, retries)
+                measure_chunk(chunk, chunk_mp3_path)
 
                 # Green text
                 print(f"\033[32m{progress.prefix()}             Saved chunk {local_chunk_counter} of {len(text_chunks)} for chapter {chapter_index}/{len(chapters)} as chunk {global_chunk_counter}\033[0m")
@@ -838,9 +899,17 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
 
             if chapter_index < len(chapters):
                 next_chapter = chapters[chapter_index]
-                word_count = len(next_chapter.split())
-                estimated_minutes = max(1, round(word_count / _WORDS_PER_MINUTE[language.lower()]))
+                # Count the words of the cleaned chunks, i.e. exactly what will be
+                # spoken, matching how the measured rate is counted
+                word_count = sum(len(text_chunk.split()) for text_chunk in chapter_chunks[chapter_index])
+                estimated_minutes, words_per_minute, is_measured = estimate_chapter_minutes(
+                    word_count, language, measured_words, measured_seconds
+                )
                 duration_str = format_duration(estimated_minutes, language)
+
+                # Gray text
+                rate_source = "measured" if is_measured else "default"
+                print(f"\033[37m{progress.prefix()}         Next chapter: {word_count} words, about {estimated_minutes} min at {words_per_minute:.0f} words/min ({rate_source})\033[0m")
                 next_number = display_number + 1
                 next_title = chapter_title(next_chapter, language)
 
@@ -883,6 +952,10 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
 
         # Cyan text
         print(f"\033[36m{progress.summary()}\033[0m")
+
+        if measured_seconds > 0:
+            print(f"\033[36mMeasured narration rate: {measured_words / (measured_seconds / 60):.0f} words/min "
+                  f"over {format_clock(measured_seconds)} of narration (default table: {_WORDS_PER_MINUTE[language.lower()]} words/min)\033[0m")
 
         # Combine all MP3 chunks into a single MP3 audiobook.
         # Streamed chunk by chunk, so neither RAM nor the 4 GiB WAV limit apply.

@@ -3,6 +3,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.2] - 07-10-2026
+### Changed
+- chapter duration estimates in the end markers now use the narration rate measured in the current run, including chunks reused from an interrupted run, instead of only the fixed words-per-minute rate
+- the fixed rate (German: 157, English: 173) is still used until 2 minutes of narration have been measured
+- words are counted from the cleaned text, which means exactly what is spoken
+
+### Added
+- log line before every end marker with the word count, the estimated minutes and whether the rate was measured or the default
+- the measured narration rate is printed at the end of a run, so the fixed rates can be calibrated
+
 ## [3.3.1] - 07-10-2026
 ### Added
 - progress prefix on every status line showing the finished chunks out of the total, the percentage and the estimated remaining time (ETA), chunks reused from an interrupted run are not counted in the ETA
