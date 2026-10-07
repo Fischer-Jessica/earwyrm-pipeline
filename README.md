@@ -11,7 +11,7 @@
 <p align="center" style="font-family: Doto, monospace;">Your tome hoard, synthesized.</p>
 
 <p align="center">
-  <strong>Current version:</strong> <code>3.3.2</code> &nbsp;|&nbsp;
+  <strong>Current version:</strong> <code>3.3.3</code> &nbsp;|&nbsp;
   <strong>Last updated:</strong> <code>07-10-2026</code>
 </p>
 
@@ -58,20 +58,23 @@ This script was developed and tested on Ubuntu 24.04, using Python 3.12 and edge
 ## Usage
 Run the script with the following command:
 ```bash
-python main.py <epub_path> <language> <voice> <marker_voice>
+python main.py <epub_path> <language> [<voice> [<marker_voice>]]
 ```
 - Replace `<epub_path>` with the path to the EPUB file.
 - Replace `<language>` with the desired language code (`en` for English, `de` for German).
-- Replace `<voice>` with the desired Edge-TTS voice for main narration.
-- Replace `<marker_voice>` with the desired Edge-TTS voice for chapter markers.
+- Optionally replace `<voice>` with the desired Edge-TTS voice for main narration.
+- Optionally replace `<marker_voice>` with the desired Edge-TTS voice for chapter markers.
+
+If no voices are given, the defaults of the chosen language are used. They are defined in `_DEFAULT_VOICE_PROFILES` at the top of the script. Voices given explicitly always take precedence, and giving only `<voice>` keeps the default `<marker_voice>`. The voices actually used are printed at startup.
 
 See [tts.travisvn.com](https://tts.travisvn.com) for available voices.
 
 ## Example
 ```bash
+python main.py ~/Documents/Eragon.epub de
 python main.py ~/Documents/Eragon.epub de de-DE-ConradNeural de-DE-SeraphinaMultilingualNeural
 ```
-This command will process the `Eragon.epub` file and read it aloud in German, saving the result as `Eragon.mp3` in `./output/`.
+The first command uses the default German voices, the second one custom voices. Both process the `Eragon.epub` file and read it aloud in German, saving the result as `Eragon.mp3` in `./output/`.
 
 ---
 

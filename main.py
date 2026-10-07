@@ -18,12 +18,40 @@ import re   # Regular expressions for text processing
 
 from cover import make_cover   # To compose the audiobook cover (book cover + logo strip + version and duration)
 
-VERSION = "3.3.2"   # Single source of truth: spoken in the intro and shown on the cover
+VERSION = "3.3.3"   # Single source of truth: spoken in the intro and shown on the cover
 
 _SPOKEN_DIGITS = {
     "de": ["null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun"],
     "en": ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"],
 }
+
+# Default voices per language, used when voice and/or marker voice are not
+# given on the command line. The narration voice and the marker voice are
+# deliberately different, so markers stand out from the narration.
+_DEFAULT_VOICE_PROFILES = {
+    "de": {"voice": "de-DE-SeraphinaMultilingualNeural", "marker_voice": "de-DE-ConradNeural"},
+    "en": {"voice": "en-GB-RyanNeural", "marker_voice": "en-GB-SoniaNeural"},
+}
+
+def resolve_voices(language, voice=None, marker_voice=None):
+    """
+    Fill in missing voices from the default voice profile of the language.
+
+    :param language: Language code ('de' or 'en').
+    :param voice: Narration voice from the command line, or None.
+    :param marker_voice: Marker voice from the command line, or None.
+
+    :return: A tuple (voice, marker_voice, voice_is_default, marker_voice_is_default).
+    """
+    profile = _DEFAULT_VOICE_PROFILES[language.lower()]
+    voice_is_default = not voice
+    marker_voice_is_default = not marker_voice
+    return (
+        profile["voice"] if voice_is_default else voice,
+        profile["marker_voice"] if marker_voice_is_default else marker_voice,
+        voice_is_default,
+        marker_voice_is_default,
+    )
 
 def spoken_version(language):
     """
@@ -164,7 +192,7 @@ def epub_to_chapters(epub_path):
 
     return chapters
 
-def epub_metadata_for_mp3(epub_path):
+def epub_metadata_for_mp3(epub_path, language):
     """
     Extract the book metadata and cover image intended for embedding into
     the finished MP3, as opposed to bookkeeping fields that describe the
@@ -180,6 +208,9 @@ def epub_metadata_for_mp3(epub_path):
     kept regardless.
 
     :param epub_path: Path to the EPUB file.
+    :param language: Output language code ('de' or 'en'). This is mapped
+                     explicitly to the ISO 639-2 code used by the MP3 ID3
+                     language tag ('deu' or 'eng').
 
     :return: A tuple (metadata, cover_item). metadata is a dict with any of
              the keys "title", "artist", "language", "album", "track",
@@ -202,13 +233,14 @@ def epub_metadata_for_mp3(epub_path):
     if creator:
         metadata['artist'] = creator
 
-    language = first('DC', 'language')
-    if language:
-        language_names = {
-            "de": "German",
-            "en": "English",
-        }
-        metadata['language'] = language_names.get(language.lower(), language)
+    # Use the language selected for the audiobook, not the EPUB's DC language
+    # metadata. Internally the pipeline uses "de" / "en"; for the MP3 ID3
+    # language tag FFmpeg writes these as the ISO 639-2 codes "deu" / "eng".
+    language_names = {
+        "de": "deu",
+        "en": "eng",
+    }
+    metadata['language'] = language_names[language.lower()]
 
     source = first('DC', 'source')
     if source:
@@ -1053,11 +1085,25 @@ def main():
     parser = argparse.ArgumentParser(description="Convert EPUB to TTS audio")
     parser.add_argument("epub_path", help="Path to the EPUB file")
     parser.add_argument("language", type=str.lower,choices=["de", "en"], metavar="{de,en}", help="Language code of the book")
-    parser.add_argument("voice", help="Edge-TTS voice for main narration (see https://tts.travisvn.com for options)")
-    parser.add_argument("marker_voice", help="Edge-TTS voice for markers (see https://tts.travisvn.com for options)")
+    parser.add_argument("voice", nargs="?", default=None,
+                        help="Edge-TTS voice for main narration (optional, default depends on language: "
+                             + ", ".join(f"{lang}={profile['voice']}" for lang, profile in _DEFAULT_VOICE_PROFILES.items())
+                             + "; see https://tts.travisvn.com for options)")
+    parser.add_argument("marker_voice", nargs="?", default=None,
+                        help="Edge-TTS voice for markers (optional, default depends on language: "
+                             + ", ".join(f"{lang}={profile['marker_voice']}" for lang, profile in _DEFAULT_VOICE_PROFILES.items())
+                             + "; see https://tts.travisvn.com for options)")
 
     args = parser.parse_args()
     language = args.language
+
+    args.voice, args.marker_voice, voice_is_default, marker_voice_is_default = resolve_voices(
+        language, args.voice, args.marker_voice
+    )
+
+    # Cyan text
+    print(f"\033[36mVoice: {args.voice}{' (default)' if voice_is_default else ''}, "
+          f"marker voice: {args.marker_voice}{' (default)' if marker_voice_is_default else ''}\033[0m")
 
     # Check if EPUB file exists
     if not os.path.isfile(args.epub_path):
@@ -1080,7 +1126,7 @@ def main():
 
     chapters.insert(0, version_intro)
 
-    metadata, cover_item = epub_metadata_for_mp3(args.epub_path)
+    metadata, cover_item = epub_metadata_for_mp3(args.epub_path, language)
 
     chapters_to_mp3(
         language,

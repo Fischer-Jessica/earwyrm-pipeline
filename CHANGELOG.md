@@ -3,6 +3,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.3] - 07-10-2026
+### Added
+- default voice profile per language (German: `de-DE-SeraphinaMultilingualNeural` / `de-DE-ConradNeural`, English: `en-GB-RyanNeural` / `en-GB-SoniaNeural`), defined in `_DEFAULT_VOICE_PROFILES`
+- startup line showing which voices are used and which of them are defaults
+
+### Changed
+- `voice` and `marker_voice` are now optional command-line arguments, explicitly given voices take precedence, and giving only `voice` keeps the default marker voice
+
+### Fixed
+- MP3 language metadata now uses the three-letter codes (`eng`/`deu`) that ID3 expects instead of the full language names
+
 ## [3.3.2] - 07-10-2026
 ### Changed
 - chapter duration estimates in the end markers now use the narration rate measured in the current run, including chunks reused from an interrupted run, instead of only the fixed words-per-minute rate
