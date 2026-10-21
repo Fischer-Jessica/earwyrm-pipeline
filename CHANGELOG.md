@@ -3,6 +3,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.6] - 21-10-2026
+### Changed
+- significantly improved MP3 metadata handling for more complete and consistent audiobook metadata
+- updated the CLI output color scheme to improve readability and visual consistency
+- improved README.md documentation, including the new `--description` and `--publisher` command-line options, metadata extraction and overrides, chapter markers, CLI output colors, error handling and resume behavior
+
 ## [3.3.5] - 21-10-2026
 ### Added
 - abort after 5 repeated `403` errors during the WebSocket handshake, with a hint to update `edge-tts` instead of retrying indefinitely; already synthesized chunks are preserved so the next run can resume

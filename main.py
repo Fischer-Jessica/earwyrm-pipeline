@@ -17,7 +17,22 @@ import re   # Regular expressions for text processing
 
 from cover import make_cover   # To compose the audiobook cover (book cover + logo strip + version and duration)
 
-VERSION = "3.3.5"   # Single source of truth: spoken in the intro and shown on the cover
+VERSION = "3.3.6"   # Single source of truth: spoken in the intro and shown on the cover
+
+# Console output colors
+class C:
+    RESET = "\033[0m"
+    CYAN = "\033[36m"          # Startup, summaries, completed files
+    BLUE = "\033[34m"          # Reused files and chunks
+    BRIGHT_BLUE = "\033[94m"   # Secondary progress information
+    MAGENTA = "\033[35m"       # Chapter processing
+    GREEN = "\033[32m"         # Generated speech chunks
+    BRIGHT_GREEN = "\033[92m"  # Generated chapter markers
+    YELLOW = "\033[33m"        # Warnings
+    ORANGE = "\033[38;5;208m"  # Active attempts and retries
+    RED = "\033[31m"           # Errors
+    GRAY = "\033[90m"          # Technical details and cleanup
+    WHITE = "\033[97m"         # Progress and chapter boundaries
 
 _SPOKEN_DIGITS = {
     "de": ["null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun"],
@@ -106,8 +121,7 @@ async def synthesize_chunk_safe(text, output_path, voice, max_wait=60):
         try:
             await synthesize_chunk(text, output_path, voice)
             if attempt > 0:
-                # Yellow text — recovered after retries
-                print(f"\033[33m            Recovered after {attempt} retries: {text[:50]}...\033[0m")
+                print(f"{C.YELLOW}            Recovered after {attempt} retries: {text[:50]}...{C.RESET}")
             return attempt
         except (edge_tts.exceptions.NoAudioReceived, aiohttp.client_exceptions.WSServerHandshakeError) as e:
             attempt += 1
@@ -119,13 +133,12 @@ async def synthesize_chunk_safe(text, output_path, voice, max_wait=60):
                 ) from e
 
             wait_time = min(2 ** (attempt - 1), max_wait)  # 1s, 2s, 4s, 8s, ... capped at max_wait
-            # Red text for failure, but we keep going
-            print(f"\033[31m            Attempt {attempt} failed (len={len(text)}): {e} — retrying in {wait_time}s...\033[0m")
+            print(f"{C.ORANGE}            Attempt {attempt} failed (len={len(text)}): {e} — retrying in {wait_time}s...{C.RESET}")
             await asyncio.sleep(wait_time)
         except Exception as e:
             # For unexpected errors, also retry with max_wait delay
             attempt += 1
-            print(f"\033[31m            Attempt {attempt} unexpected error (len={len(text)}): {e} — retrying in {max_wait}s...\033[0m")
+            print(f"{C.RED}            Attempt {attempt} unexpected error (len={len(text)}): {e} — retrying in {max_wait}s...{C.RESET}")
             await asyncio.sleep(max_wait)
 
 def epub_to_chapters(epub_path):
@@ -145,7 +158,7 @@ def epub_to_chapters(epub_path):
     try:
         ebook = epub.read_epub(epub_path)
     except Exception as e:
-        print(f"\033[31mError reading EPUB file '{epub_path}': {e}\033[0m")
+        print(f"{C.RED}Error reading EPUB file '{epub_path}': {e}{C.RESET}")
         return []
 
     chapters = []
@@ -204,36 +217,31 @@ def epub_to_chapters(epub_path):
             if current_title or current_content:
                 save_chapter(current_title, current_content)
         except Exception as e:
-            print(f"\033[31mError processing EPUB document item: {e}\033[0m")
+            print(f"{C.RED}Error processing EPUB document item: {e}{C.RESET}")
             continue
 
     return chapters
 
-def epub_metadata_for_mp3(epub_path, language):
+def epub_metadata_for_mp3(epub_path, language, description_override=None, publisher_override=None):
     """
-    Extract the book metadata and cover image intended for embedding into
-    the finished MP3, as opposed to bookkeeping fields that describe the
-    EPUB file itself rather than the book (e.g. Sigil's own version, the
-    calibre UUID, the last-modified date, or maintainer-specific custom
-    fields like "Ordner"/"Version").
+    Extract the book metadata and cover image intended for the finished MP3.
 
-    "calibre:series" is embedded as-is, including the literal value
-    "Standalone" for works that aren't part of a series -- there is no
-    special-casing here, by design. Similarly, the maintainer's own custom
-    "Ordner" and "Version" fields are embedded as-is, as custom (TXXX) tags,
-    despite not being standard book metadata -- this maintainer wants them
-    kept regardless.
+    Standard tags are used where possible. The series name and its position
+    are written as "series" and "series-part" rather than misusing album/track.
+    The EPUB's "Ordner" field is mapped to genre because many audiobook players
+    do not display arbitrary custom tags. The pipeline version is recorded in
+    composer. A CLI description or publisher overrides the EPUB value when supplied.
+    A series is only written if the EPUB names a real one: Calibre's placeholder
+    "Standalone" counts as no series, and the series position is never written
+    without a series.
 
     :param epub_path: Path to the EPUB file.
-    :param language: Output language code ('de' or 'en'). This is mapped
-                     explicitly to the ISO 639-2 code used by the MP3 ID3
-                     language tag ('deu' or 'eng').
+    :param language: Output language code ('de' or 'en'), mapped to ID3's
+                     ISO 639-2 codes ('deu' or 'eng').
+    :param description_override: Optional description supplied on the CLI.
+    :param publisher_override: Optional publisher supplied on the CLI.
 
-    :return: A tuple (metadata, cover_item). metadata is a dict with any of
-             the keys "title", "artist", "language", "album", "track",
-             "comment", "Ordner", "Version" that could be determined; keys
-             with no value are omitted. cover_item is the ebooklib item
-             holding the cover image, or None if none was found.
+    :return: A tuple (metadata, cover_item). Missing metadata fields are omitted.
     """
     ebook = epub.read_epub(epub_path)
     metadata = {}
@@ -250,24 +258,31 @@ def epub_metadata_for_mp3(epub_path, language):
     if creator:
         metadata['artist'] = creator
 
-    # Use the language selected for the audiobook, not the EPUB's DC language
-    # metadata. Internally the pipeline uses "de" / "en"; for the MP3 ID3
-    # language tag FFmpeg writes these as the ISO 639-2 codes "deu" / "eng".
-    language_names = {
-        "de": "deu",
-        "en": "eng",
-    }
-    metadata['language'] = language_names[language.lower()]
+    publisher = publisher_override if publisher_override is not None else first('DC', 'publisher')
+    if publisher and str(publisher).strip():
+        metadata['publisher'] = str(publisher).strip()
+    else:
+        print(f"{C.YELLOW}Warning: the EPUB has no publisher (dc:publisher), so none is written. Use --publisher to set one.{C.RESET}")
 
-    source = first('DC', 'source')
-    if source:
-        metadata['comment'] = source
+    # Use the selected audiobook language rather than trusting the EPUB's
+    # language field. These are the ID3 ISO 639-2 codes requested by the user.
+    metadata['language'] = {"de": "deu", "en": "eng"}[language.lower()]
+    metadata['composer'] = f"Earwyrm-Pipeline-v{VERSION}"
+
+    description = description_override
+    if description is None:
+        description = first('DC', 'description')
+    if description:
+        # EPUB descriptions can contain XHTML; convert it to readable text while
+        # retaining paragraph breaks. CLI-provided text is kept as entered.
+        if description_override is None:
+            description = BeautifulSoup(str(description), 'html.parser').get_text("\n", strip=True)
+        metadata['description'] = str(description).strip()
 
     series = None
     series_index = None
     cover_id = None
     ordner = None
-    version = None
     for _, attrs in ebook.get_metadata('OPF', 'meta'):
         name = attrs.get('name')
         if name == 'calibre:series':
@@ -278,23 +293,18 @@ def epub_metadata_for_mp3(epub_path, language):
             cover_id = attrs.get('content')
         elif name == 'Ordner':
             ordner = attrs.get('content')
-        elif name == 'Version':
-            version = attrs.get('content')
 
-    if series:
-        metadata['album'] = series
+    # "Standalone" is only Calibre's placeholder for a book without a series, and a
+    # position without a series is meaningless, so both are skipped together.
+    if series and series.strip().lower() != 'standalone':
+        metadata['series'] = series
         if series_index is not None:
-            metadata['track'] = series_index
-
+            metadata['series-part'] = series_index
     if ordner:
-        metadata['Ordner'] = ordner
-    if version:
-        metadata['Version'] = version
+        metadata['subtitle'] = ordner
 
     # The "cover" meta's content is normally a manifest item id, but some
-    # tools have been seen using a filename-like id instead. get_item_with_id()
-    # only matches a real id, so fall back to whichever image the EPUB marks
-    # as ITEM_COVER if the direct lookup comes up empty.
+    # tools use a filename-like id instead. Fall back to ITEM_COVER if needed.
     cover_item = ebook.get_item_with_id(cover_id) if cover_id else None
     if cover_item is None:
         cover_item = next(iter(ebook.get_items_of_type(ITEM_COVER)), None)
@@ -352,7 +362,7 @@ def split_text_into_chunks(text, max_length):
     try:
         sentences = _split_sentences(text.strip())
     except Exception as e:
-        print(f"\033[31mError splitting text into sentences: {e}\033[0m")
+        print(f"{C.RED}Error splitting text into sentences: {e}{C.RESET}")
         return [text]
 
     text_chunks = []
@@ -443,7 +453,7 @@ def clean_text(text, language):
 
         return text
     except Exception as e:
-        print(f"\033[31mError cleaning text: {e}\033[0m")
+        print(f"{C.RED}Error cleaning text: {e}{C.RESET}")
         return text
 
 # Measured words per minute of the finished audio (including chapter markers).
@@ -634,7 +644,7 @@ class ProgressTracker:
         return (f"Synthesis finished after {elapsed}: {self.synthesized} chunk(s) synthesized, "
                 f"{self.reused} reused, {self.retries} retry(s)")
 
-def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_indices, failed_chunks=None, chapter_start_chunk_indices=None, show_progress=False):
+def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_indices, failed_chunks=None, chapter_start_chunk_indices=None, show_progress=False, end_positions=None):
     """
     Yield the chunk MP3s one at a time as AudioSegments, inserting 2 seconds of
     silence after every end-of-chapter marker and 1 second of silence after
@@ -653,36 +663,45 @@ def iter_audio_segments(output_dir, base_name, total_chunks, chapter_end_chunk_i
     :param chapter_start_chunk_indices: Optional set of chunk indices that are
                     chapter start markers.
     :param show_progress: If True, print the assembly progress in steps of 10%.
+    :param end_positions: Optional dict. For every chapter end marker that was
+                    loaded, the position in the finished audiobook (in ms,
+                    including the silence after the marker) is stored under
+                    its chunk index, so the caller can write chapter marks.
 
     :return: AudioSegment objects in playback order.
     """
     chunk_count = total_chunks - 1
     progress_step = max(1, chunk_count // 10)
+    position_ms = 0   # Position in the finished audiobook, so chapter boundaries are known
 
     for i in range(1, total_chunks):
         if show_progress and (i % progress_step == 0 or i == chunk_count):
-            # Gray text
-            print(f"\033[37m    Assembling: {i}/{chunk_count} chunks ({100.0 * i / chunk_count:.0f}%)\033[0m")
+            print(f"{C.WHITE}    Assembling: {i}/{chunk_count} chunks ({100.0 * i / chunk_count:.0f}%){C.RESET}")
 
         assembly_mp3_path = os.path.join(output_dir, f"{base_name}_chunk_{i}.mp3")
         try:
             chunk_audio = AudioSegment.from_mp3(assembly_mp3_path)
         except Exception as e:
-            print(f"\033[31mError loading MP3 chunk {i}: {e}\033[0m")
+            print(f"{C.RED}Error loading MP3 chunk {i}: {e}{C.RESET}")
             if failed_chunks is not None:
                 failed_chunks.append(i)
             continue
 
         yield chunk_audio
+        position_ms += len(chunk_audio)
 
         # Add 2 seconds of silence after end-of-chapter markers
         if i in chapter_end_chunk_indices:
             yield AudioSegment.silent(duration=2000, frame_rate=chunk_audio.frame_rate)
+            position_ms += 2000
+            if end_positions is not None:
+                end_positions[i] = position_ms
 
         # Add 1 second of silence after start-of-chapter markers, so the
         # announcement doesn't run straight into the narration
         if chapter_start_chunk_indices and i in chapter_start_chunk_indices:
             yield AudioSegment.silent(duration=1000, frame_rate=chunk_audio.frame_rate)
+            position_ms += 1000
 
 def print_duration(mp3_path):
     """
@@ -702,12 +721,11 @@ def print_duration(mp3_path):
         total_seconds = int(float(result.stdout.strip()))
         hours, remainder = divmod(total_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
-        # Cyan text, same as the "assembled" message above it
         duration = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        print(f"\033[36mDuration: {duration}\033[0m")
+        print(f"{C.CYAN}Duration: {duration}{C.RESET}")
         return duration
     except Exception as e:
-        print(f"\033[31mError determining audiobook duration: {e}\033[0m")
+        print(f"{C.RED}Error determining audiobook duration: {e}{C.RESET}")
         return None
 
 def replace_cover_art(mp3_path, cover_path):
@@ -733,6 +751,46 @@ def replace_cover_art(mp3_path, cover_path):
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+
+def add_chapters(mp3_path, chapters_ms):
+    """
+    Write chapter marks into an existing MP3 in place without re-encoding and
+    without touching its other metadata or the cover. The audio is copied into
+    a temporary file first, which only replaces the original once ffmpeg has
+    succeeded.
+
+    :param mp3_path: Path to the MP3 file.
+    :param chapters_ms: List of (title, start_ms, end_ms) tuples.
+    """
+    def escape(value):
+        # The ffmetadata format requires these characters to be escaped with a backslash
+        for char in ("\\", "=", ";", "#", "\n"):
+            value = value.replace(char, "\\" + char)
+        return value
+
+    base = os.path.splitext(mp3_path)[0]
+    metadata_path = base + ".chapters.txt"
+    temp_path = base + ".tmp.mp3"
+
+    lines = [";FFMETADATA1"]
+    for title, start, end in chapters_ms:
+        lines += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={start}", f"END={end}", f"title={escape(title)}"]
+
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-i", mp3_path, "-i", metadata_path,
+        "-map", "0", "-map_metadata", "0", "-map_chapters", "1",
+        "-c", "copy", "-id3v2_version", "3", temp_path,
+    ]
+    try:
+        with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+            metadata_file.write("\n".join(lines) + "\n")
+        subprocess.run(cmd, check=True)
+        os.replace(temp_path, mp3_path)
+    finally:
+        for leftover in (metadata_path, temp_path):
+            if os.path.exists(leftover):
+                os.remove(leftover)
 
 def export_mp3_streaming(segments, mp3_output_path, bitrate="48k", metadata=None, cover_path=None):
     """
@@ -820,7 +878,7 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
     try:
         os.makedirs(output_dir, exist_ok=True)
     except Exception as e:
-        print(f"\033[31mError creating output directory '{output_dir}': {e}\033[0m")
+        print(f"{C.RED}Error creating output directory '{output_dir}': {e}{C.RESET}")
         return
 
     # Clean and split every chapter up front, so the total number of chunks
@@ -842,11 +900,10 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
     )
     progress = ProgressTracker(total_units, already_present)
 
-    # Cyan text
     plan = f"Plan: introduction + {len(chapters) - 1} chapter(s), {total_units} audio chunks including markers"
     if already_present:
         plan += f", {already_present} already present from a previous run"
-    print(f"\033[36m{plan}\033[0m")
+    print(f"{C.CYAN}{plan}{C.RESET}")
 
     global_chunk_counter = 1
     chapter_end_chunk_indices = []
@@ -876,8 +933,7 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
             label = labels[chapter_index - 1]
             part_label = label or "untitled"
 
-            # Magenta text
-            print(f"\033[35m{progress.prefix()}     Processing chapter {chapter_index}/{len(chapters)} ({part_label}) with {len(text_chunks)} chunks\033[0m")
+            print(f"{C.MAGENTA}{progress.prefix()}     Processing chapter {chapter_index}/{len(chapters)} ({part_label}) with {len(text_chunks)} chunks{C.RESET}")
 
             # Add a start marker only for titled real chapters. The introduction
             # and untitled sections get no start marker.
@@ -887,15 +943,13 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
 
                 if os.path.exists(start_marker_mp3_path):
                     progress.record_reused()
-                    # Bright blue text
-                    print(f"\\033[94m{progress.prefix()}         Reused {part_label} start marker as chunk {global_chunk_counter}\\033[0m")
+                    print(f"{C.BLUE}{progress.prefix()}         Reused {part_label} start marker as chunk {global_chunk_counter}{C.RESET}")
                 else:
                     started = time.monotonic()
                     retries = await synthesize_chunk_safe(start_marker_text, start_marker_mp3_path, marker_voice)
                     progress.record_synthesized(time.monotonic() - started, retries)
 
-                    # Bright green text
-                    print(f"\\033[92m{progress.prefix()}         Saved {part_label} start marker as chunk {global_chunk_counter}\\033[0m")
+                    print(f"{C.BRIGHT_GREEN}{progress.prefix()}         Saved {part_label} start marker as chunk {global_chunk_counter}{C.RESET}")
 
                 chapter_start_chunk_indices.append(global_chunk_counter)
                 global_chunk_counter += 1
@@ -909,8 +963,7 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                 if os.path.exists(chunk_mp3_path):
                     measure_chunk(chunk, chunk_mp3_path)
                     progress.record_reused()
-                    # Blue text
-                    print(f"\033[34m{progress.prefix()}             Reused chunk {local_chunk_counter} of {len(text_chunks)} for chapter {chapter_index}/{len(chapters)} as chunk {global_chunk_counter}\033[0m")
+                    print(f"{C.BLUE}{progress.prefix()}             Reused chunk {local_chunk_counter} of {len(text_chunks)} for chapter {chapter_index}/{len(chapters)} as chunk {global_chunk_counter}{C.RESET}")
                     local_chunk_counter += 1
                     global_chunk_counter += 1
                     continue
@@ -922,8 +975,7 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                 progress.record_synthesized(time.monotonic() - started, retries)
                 measure_chunk(chunk, chunk_mp3_path)
 
-                # Green text
-                print(f"\033[32m{progress.prefix()}             Saved chunk {local_chunk_counter} of {len(text_chunks)} for chapter {chapter_index}/{len(chapters)} as chunk {global_chunk_counter}\033[0m")
+                print(f"{C.GREEN}{progress.prefix()}             Saved chunk {local_chunk_counter} of {len(text_chunks)} for chapter {chapter_index}/{len(chapters)} as chunk {global_chunk_counter}{C.RESET}")
                 local_chunk_counter += 1
                 global_chunk_counter += 1
 
@@ -940,9 +992,8 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                 )
                 duration_str = format_duration(estimated_minutes, language)
 
-                # Gray text
                 rate_source = "measured" if is_measured else "default"
-                print(f"\033[37m{progress.prefix()}         Next chapter: {word_count} words, about {estimated_minutes} min at {words_per_minute:.0f} words/min ({rate_source})\033[0m")
+                print(f"{C.GRAY}{progress.prefix()}         Next chapter: {word_count} words, about {estimated_minutes} min at {words_per_minute:.0f} words/min ({rate_source}){C.RESET}")
                 if language.lower() == "de":
                     this_part = "Ende der Einleitung" if chapter_index == 1 else (
                         f"Ende von {label}" if label else "Ende des Kapitels")
@@ -961,15 +1012,13 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
 
             if os.path.exists(marker_mp3_path):
                 progress.record_reused()
-                # Bright blue text
-                print(f"\033[94m{progress.prefix()}         Reused {part_label} end marker as chunk {global_chunk_counter}\033[0m")
+                print(f"{C.BLUE}{progress.prefix()}         Reused {part_label} end marker as chunk {global_chunk_counter}{C.RESET}")
             else:
                 started = time.monotonic()
                 retries = await synthesize_chunk_safe(marker_text, marker_mp3_path, marker_voice)
                 progress.record_synthesized(time.monotonic() - started, retries)
 
-                # Bright green text
-                print(f"\033[92m{progress.prefix()}         Saved {part_label} end marker as chunk {global_chunk_counter}\033[0m")
+                print(f"{C.BRIGHT_GREEN}{progress.prefix()}         Saved {part_label} end marker as chunk {global_chunk_counter}{C.RESET}")
 
             chapter_end_chunk_indices.append(global_chunk_counter)
             global_chunk_counter += 1
@@ -981,12 +1030,11 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
     try:
         asyncio.run(process())
 
-        # Cyan text
-        print(f"\033[36m{progress.summary()}\033[0m")
+        print(f"{C.CYAN}{progress.summary()}{C.RESET}")
 
         if measured_seconds > 0:
-            print(f"\033[36mMeasured narration rate: {measured_words / (measured_seconds / 60):.0f} words/min "
-                  f"over {format_clock(measured_seconds)} of narration (default table: {_WORDS_PER_MINUTE[language.lower()]} words/min)\033[0m")
+            print(f"{C.CYAN}Measured narration rate: {measured_words / (measured_seconds / 60):.0f} words/min "
+                  f"over {format_clock(measured_seconds)} of narration (default table: {_WORDS_PER_MINUTE[language.lower()]} words/min){C.RESET}")
 
         # Combine all MP3 chunks into a single MP3 audiobook.
         # Streamed chunk by chunk, so neither RAM nor the 4 GiB WAV limit apply.
@@ -1001,13 +1049,13 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                 with open(cover_path, "wb") as cover_file:
                     cover_file.write(cover_item.get_content())
             except Exception as e:
-                print(f"\033[31mError writing temporary cover file '{cover_path}': {e}\033[0m")
+                print(f"{C.RED}Error writing temporary cover file '{cover_path}': {e}{C.RESET}")
                 cover_path = None
 
         try:
             failed_chunks = []
-            # Cyan text
-            print(f"\033[36mAssembling audiobook from {global_chunk_counter - 1} chunks...\033[0m")
+            end_positions = {}
+            print(f"{C.CYAN}Assembling audiobook from {global_chunk_counter - 1} chunks...{C.RESET}")
             export_mp3_streaming(
                 iter_audio_segments(
                     output_dir,
@@ -1016,7 +1064,8 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                     marker_indices,
                     failed_chunks=failed_chunks,
                     chapter_start_chunk_indices=start_marker_indices,
-                    show_progress=True
+                    show_progress=True,
+                    end_positions=end_positions
                 ),
                 mp3_output_path,
                 metadata=metadata,
@@ -1024,14 +1073,33 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
             )
             export_succeeded = True
 
-            # Cyan text
-            print(f"\033[36mAudiobook assembled and saved to: {mp3_output_path}\033[0m")
+            print(f"{C.CYAN}Audiobook assembled and saved to: {mp3_output_path}{C.RESET}")
 
             if failed_chunks:
                 missing_markers = [i for i in failed_chunks if i in marker_indices]
-                print(f"\033[31mWarning: {len(failed_chunks)} chunk(s) failed to load and are MISSING from the final audio: {failed_chunks}\033[0m")
+                print(f"{C.RED}Warning: {len(failed_chunks)} chunk(s) failed to load and are MISSING from the final audio: {failed_chunks}{C.RESET}")
                 if missing_markers:
-                    print(f"\033[31mThis includes {len(missing_markers)} chapter-end marker(s) (and the silence after them), so a chapter boundary was skipped silently in the output.\033[0m")
+                    print(f"{C.RED}This includes {len(missing_markers)} chapter-end marker(s) (and the silence after them), so a chapter boundary was skipped silently in the output.{C.RESET}")
+
+            # Chapter marks: the introduction is chapter 0, every following section
+            # runs from the end of the previous one to its own end marker.
+            chapter_marks = []
+            start_ms = 0
+            for number, (end_index, (title, _)) in enumerate(zip(chapter_end_chunk_indices, chapters)):
+                if end_index not in end_positions:
+                    continue   # The end marker could not be loaded, so this boundary is lost
+                if number == 0:
+                    name = "Einleitung" if language.lower() == "de" else "Introduction"
+                else:
+                    name = labels[number] or (f"Abschnitt {number}" if language.lower() == "de" else f"Section {number}")
+                chapter_marks.append((name, start_ms, end_positions[end_index]))
+                start_ms = end_positions[end_index]
+
+            try:
+                add_chapters(mp3_output_path, chapter_marks)
+                print(f"{C.CYAN}{len(chapter_marks)} chapter marks written{C.RESET}")
+            except Exception as e:
+                print(f"{C.RED}Error writing chapter marks (the MP3 has none): {e}{C.RESET}")
 
             duration = print_duration(mp3_output_path)
 
@@ -1042,11 +1110,11 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                 try:
                     make_cover(cover_path, VERSION, duration, generated_cover_path)
                     replace_cover_art(mp3_output_path, generated_cover_path)
-                    print(f"\033[36mCover generated and embedded\033[0m")
+                    print(f"{C.GREEN}Cover generated and embedded{C.RESET}")
                 except Exception as e:
-                    print(f"\033[31mError generating or embedding the cover (the original cover was kept): {e}\033[0m")
+                    print(f"{C.RED}Error generating or embedding the cover (the original cover was kept): {e}{C.RESET}")
         except Exception as e:
-            print(f"\033[31mError exporting MP3 file '{mp3_output_path}': {e}\033[0m")
+            print(f"{C.RED}Error exporting MP3 file '{mp3_output_path}': {e}{C.RESET}")
 
     finally:
         for temp_cover in (cover_path, generated_cover_path):
@@ -1054,14 +1122,12 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                 try:
                     os.remove(temp_cover)
                 except Exception as e:
-                    print(f"\033[31mError deleting temporary cover file '{temp_cover}': {e}\033[0m")
+                    print(f"{C.RED}Error deleting temporary cover file '{temp_cover}': {e}{C.RESET}")
 
         if not export_succeeded:
-            # Yellow text: keeping chunks lets the next run resume instead of starting over
-            print(f"\033[33mRun did not finish. Keeping temporary MP3 chunks in '{output_dir}' so the next run can resume.\033[0m")
+            print(f"{C.YELLOW}Run did not finish. Keeping temporary MP3 chunks in '{output_dir}' so the next run can resume.{C.RESET}")
         else:
-            # Gray text
-            print(f"\033[37mCleaning up temporary MP3 files...\033[0m")
+            print(f"{C.GRAY}Cleaning up temporary MP3 files...{C.RESET}")
             for i in range(1, global_chunk_counter):
                 for mp3_to_remove in (
                     os.path.join(output_dir, f"{base_name}_chunk_{i}.mp3"),
@@ -1071,10 +1137,9 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                         if os.path.exists(mp3_to_remove):
                             os.remove(mp3_to_remove)
                     except Exception as e:
-                        print(f"\033[31mError deleting temporary file '{mp3_to_remove}': {e}\033[0m")
+                        print(f"{C.RED}Error deleting temporary file '{mp3_to_remove}': {e}{C.RESET}")
 
-        # Cyan text
-        print(f"\033[36mTotal runtime: {format_clock(time.monotonic() - progress.started)}\033[0m")
+        print(f"{C.CYAN}Total runtime: {format_clock(time.monotonic() - progress.started)}{C.RESET}")
 
 # Command-line entry point
 def main():
@@ -1092,6 +1157,11 @@ def main():
                         help="Edge-TTS voice for markers (optional, default depends on language: "
                              + ", ".join(f"{lang}={profile['marker_voice']}" for lang, profile in _DEFAULT_VOICE_PROFILES.items())
                              + "; see https://tts.travisvn.com for options)")
+    parser.add_argument("--description", default=None,
+                        help="Override the book description embedded in the MP3 metadata")
+
+    parser.add_argument("--publisher", default=None,
+                        help="Override the publisher embedded in the MP3 metadata (e.g. Ao3)")
 
     args = parser.parse_args()
     language = args.language
@@ -1100,13 +1170,12 @@ def main():
         language, args.voice, args.marker_voice
     )
 
-    # Cyan text
-    print(f"\033[36mVoice: {args.voice}{' (default)' if voice_is_default else ''}, "
-          f"marker voice: {args.marker_voice}{' (default)' if marker_voice_is_default else ''}\033[0m")
+    print(f"{C.CYAN}Voice: {args.voice}{' (default)' if voice_is_default else ''}, "
+          f"marker voice: {args.marker_voice}{' (default)' if marker_voice_is_default else ''}{C.RESET}")
 
     # Check if EPUB file exists
     if not os.path.isfile(args.epub_path):
-        print(f"\033[31mError: EPUB file '{args.epub_path}' does not exist.\033[0m")
+        print(f"{C.RED}Error: EPUB file '{args.epub_path}' does not exist.{C.RESET}")
         return
 
     base_name = os.path.splitext(os.path.basename(args.epub_path))[0]
@@ -1114,7 +1183,7 @@ def main():
     chapters = epub_to_chapters(args.epub_path)
 
     if not chapters:
-        print(f"\033[31mNo chapters found or error reading EPUB. Aborting.\033[0m")
+        print(f"{C.RED}No chapters found or error reading EPUB. Aborting.{C.RESET}")
         return
 
     # Add version of script as first chapter (no heading, so no title)
@@ -1125,7 +1194,9 @@ def main():
 
     chapters.insert(0, (None, version_intro))
 
-    metadata, cover_item = epub_metadata_for_mp3(args.epub_path, language)
+    metadata, cover_item = epub_metadata_for_mp3(
+        args.epub_path, language, description_override=args.description, publisher_override=args.publisher
+    )
 
     chapters_to_mp3(
         language,
