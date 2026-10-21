@@ -1,4 +1,3 @@
-import math
 import os   # For environment variables and file path operations
 import argparse   # For parsing command-line arguments
 import subprocess   # For piping raw PCM directly into ffmpeg
@@ -18,7 +17,7 @@ import re   # Regular expressions for text processing
 
 from cover import make_cover   # To compose the audiobook cover (book cover + logo strip + version and duration)
 
-VERSION = "3.3.4"   # Single source of truth: spoken in the intro and shown on the cover
+VERSION = "3.3.5"   # Single source of truth: spoken in the intro and shown on the cover
 
 _SPOKEN_DIGITS = {
     "de": ["null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun"],
@@ -87,7 +86,11 @@ async def synthesize_chunk(text, output_path, voice):
 
 async def synthesize_chunk_safe(text, output_path, voice, max_wait=60):
     """
-    Synthesize a single text chunk with infinite retries and exponential backoff.
+    Synthesize a single text chunk with retries and exponential backoff.
+
+    Retries are unlimited, except for repeated 403 errors during the
+    WebSocket handshake: those are not transient (usually an outdated
+    edge-tts), so the run is aborted after 5 attempts.
 
     :param text: The text to synthesize.
     :param output_path: File path where the MP3 will be saved.
@@ -95,6 +98,8 @@ async def synthesize_chunk_safe(text, output_path, voice, max_wait=60):
     :param max_wait: Maximum wait time in seconds between retries (default: 60).
 
     :return: The number of failed attempts before synthesis succeeded (0 if it worked first time).
+
+    :raises RuntimeError: If the handshake is rejected with 403 five times in a row.
     """
     attempt = 0
     while True:
@@ -106,6 +111,13 @@ async def synthesize_chunk_safe(text, output_path, voice, max_wait=60):
             return attempt
         except (edge_tts.exceptions.NoAudioReceived, aiohttp.client_exceptions.WSServerHandshakeError) as e:
             attempt += 1
+
+            # A 403 on the handshake is not a transient error, so retrying forever is pointless
+            if getattr(e, "status", None) == 403 and attempt >= 5:
+                raise RuntimeError(
+                    "Edge TTS rejects the request with 403. Update edge-tts: uv pip install -U edge-tts"
+                ) from e
+
             wait_time = min(2 ** (attempt - 1), max_wait)  # 1s, 2s, 4s, 8s, ... capped at max_wait
             # Red text for failure, but we keep going
             print(f"\033[31m            Attempt {attempt} failed (len={len(text)}): {e} — retrying in {wait_time}s...\033[0m")
@@ -127,7 +139,8 @@ def epub_to_chapters(epub_path):
 
     :param epub_path: Path to the EPUB file.
 
-    :return: List of chapters, each as a string "Title\nContent".
+    :return: List of chapters, each as a tuple (title, body). title is None
+             if the section has no <h1>/<h2> heading, body never contains the heading.
     """
     try:
         ebook = epub.read_epub(epub_path)
@@ -136,6 +149,15 @@ def epub_to_chapters(epub_path):
         return []
 
     chapters = []
+
+    def save_chapter(title, content):
+        # Filter out None-Strings and empty rows
+        body = '\n'.join(
+            line for line in ''.join(content).splitlines()
+            if line.strip() and line.strip().lower() != 'none'
+        )
+        if title or body:
+            chapters.append((title or None, body))
 
     for idref, linear in ebook.spine:
         if linear == 'no':
@@ -162,10 +184,7 @@ def epub_to_chapters(epub_path):
                 if isinstance(el, Tag) and el.name in ['h1', 'h2']:
                     # Start new chapter, save previous if exists
                     if current_title or current_content:
-                        full_text = f"{current_title}\n{''.join(current_content).strip()}"
-                        # Filter out None-Strings and empty rows
-                        full_text = '\n'.join([line for line in full_text.splitlines() if line.strip() and line.strip().lower() != 'none'])
-                        chapters.append(full_text)
+                        save_chapter(current_title, current_content)
                         current_content = []
 
                     # " " join separator so nested tags (e.g. <h1>Kapitel <em>Zwei</em></h1>)
@@ -183,9 +202,7 @@ def epub_to_chapters(epub_path):
 
             # Save last chapter
             if current_title or current_content:
-                full_text = f"{current_title}\n{''.join(current_content).strip()}"
-                full_text = '\n'.join([line for line in full_text.splitlines() if line.strip() and line.strip().lower() != 'none'])
-                chapters.append(full_text)
+                save_chapter(current_title, current_content)
         except Exception as e:
             print(f"\033[31mError processing EPUB document item: {e}\033[0m")
             continue
@@ -517,33 +534,21 @@ def format_duration(estimated_minutes, language):
             minute_word = "minute" if minutes == 1 else "minutes"
             return f"{minutes} {minute_word}"
 
-def chapter_title(chapter, language, max_length=150):
+def chapter_labels(chapters, language):
     """
-    Return the cleaned title of a chapter for use in navigation markers.
+    Return the spoken label of every chapter: its heading as it stands in the
+    EPUB, or None if the section has no heading. Index 0 is the introduction.
 
-    epub_to_chapters() puts the heading text on the first line of every
-    chapter. A chapter without a heading starts directly with body text
-    instead, so a first line longer than max_length is treated as "no title"
-    rather than reading half a paragraph out in a marker.
-
-    A leading "Kapitel 3:" / "Chapter IV -" (Arabic or Roman numeral) is stripped, since the marker
-    already announces the chapter number itself. If nothing is left after
-    that (e.g. the heading was just "Kapitel 3"), there is no separate title.
-
-    :param chapter: Chapter text as returned by epub_to_chapters().
+    :param chapters: List of (title, body) tuples, the introduction first.
     :param language: Language code ('de' or 'en').
-    :param max_length: Maximum length of a first line still treated as a title.
 
-    :return: The title, or None if the chapter has no usable title.
+    :return: List of labels (str or None), same length as chapters.
     """
-    first_line = chapter.split("\n", 1)[0].strip()
-    if not first_line or len(first_line) > max_length:
-        return None
-
-    title = clean_text(first_line, language).strip()
-    title = re.sub(r'^(kapitel|chapter)\s+(\d+|[ivxlcdm]+)\b\s*[:.,-]?\s*', '', title, flags=re.IGNORECASE)
-    title = title.strip().rstrip(".,:!?").strip()
-    return title or None
+    labels = ["introduction"]
+    for title, _ in chapters[1:]:
+        cleaned = clean_text(title, language).strip().rstrip(".,:!?").strip() if title else ""
+        labels.append(cleaned or None)
+    return labels
 
 def format_clock(seconds):
     """
@@ -801,7 +806,8 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
     :param language: Language code ('de' or 'en') for the text-to-speech model.
     :param voice: Edge-TTS voice name for main narration.
     :param marker_voice: Edge-TTS voice name for markers.
-    :param chapters: List of chapters, each containing text to be converted to speech.
+    :param chapters: List of (title, body) tuples as returned by epub_to_chapters(),
+                     with the version intro as (None, text) at index 0.
     :param base_name: Base filename for output files (no extension).
     :param metadata: Optional dict of ID3 tags from epub_metadata_for_mp3(), passed
                      straight through to export_mp3_streaming().
@@ -819,10 +825,17 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
 
     # Clean and split every chapter up front, so the total number of chunks
     # (and thereby the overall progress) is known before synthesis starts.
-    chapter_chunks = [split_text_into_chunks(clean_text(chapter, language), max_length=500) for chapter in chapters]
+    # The headings are not part of the bodies, the start markers speak them.
+    chapter_chunks = [
+        split_text_into_chunks(clean_text(body, language), max_length=500)
+        for _, body in chapters
+    ]
+    labels = chapter_labels(chapters, language)
 
-    # Narration chunks + one start marker per real chapter (not the intro) + one end marker per chapter
-    total_units = sum(len(text_chunks) for text_chunks in chapter_chunks) + (len(chapters) - 1) + len(chapters)
+    # Narration chunks + one start marker for each titled real chapter + one end marker per chapter.
+    # Untitled sections deliberately have no start marker.
+    total_start_markers = sum(1 for label in labels[1:] if label)
+    total_units = sum(len(text_chunks) for text_chunks in chapter_chunks) + total_start_markers + len(chapters)
     already_present = sum(
         1 for i in range(1, total_units + 1)
         if os.path.exists(os.path.join(output_dir, f"{base_name}_chunk_{i}.mp3"))
@@ -854,46 +867,35 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
     async def process():
         nonlocal global_chunk_counter
 
-        for chapter_index, chapter in enumerate(chapters, start=1):
+        for chapter_index in range(1, len(chapters) + 1):
             text_chunks = chapter_chunks[chapter_index - 1]
             local_chunk_counter = 1
 
-            # chapters[0] is always the version_intro inserted by main(), not a
-            # real book chapter, so it's numbered separately rather than
-            # counted as "chapter 1".
-            display_number = chapter_index - 1
-
-            if display_number == 0:
-                part_label = "introduction"
-            else:
-                title = chapter_title(chapter, language)
-                part_label = f"chapter {display_number}" + (f": {title}" if title else "")
+            # chapters[0] is always the version intro inserted by main(), not a
+            # real book chapter. A chapter without a heading has label None.
+            label = labels[chapter_index - 1]
+            part_label = label or "untitled"
 
             # Magenta text
             print(f"\033[35m{progress.prefix()}     Processing chapter {chapter_index}/{len(chapters)} ({part_label}) with {len(text_chunks)} chunks\033[0m")
 
-            # Add an audio marker for start of chapter. The introduction gets
-            # none, since it isn't a book chapter and opens the audiobook anyway.
-            if display_number > 0:
+            # Add a start marker only for titled real chapters. The introduction
+            # and untitled sections get no start marker.
+            if chapter_index > 1 and label:
                 start_marker_mp3_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.mp3")
+                start_marker_text = f"{label}."
 
-                if language.lower() == "de":
-                    start_marker_text = f"Kapitel {display_number}."
-                else:
-                    start_marker_text = f"Chapter {display_number}."
-
-                # Start markers retry indefinitely, too
                 if os.path.exists(start_marker_mp3_path):
                     progress.record_reused()
                     # Bright blue text
-                    print(f"\033[94m{progress.prefix()}         Reused chapter {display_number} start marker as chunk {global_chunk_counter}\033[0m")
+                    print(f"\\033[94m{progress.prefix()}         Reused {part_label} start marker as chunk {global_chunk_counter}\\033[0m")
                 else:
                     started = time.monotonic()
                     retries = await synthesize_chunk_safe(start_marker_text, start_marker_mp3_path, marker_voice)
                     progress.record_synthesized(time.monotonic() - started, retries)
 
                     # Bright green text
-                    print(f"\033[92m{progress.prefix()}         Saved chapter {display_number} start marker as chunk {global_chunk_counter}\033[0m")
+                    print(f"\\033[92m{progress.prefix()}         Saved {part_label} start marker as chunk {global_chunk_counter}\\033[0m")
 
                 chapter_start_chunk_indices.append(global_chunk_counter)
                 global_chunk_counter += 1
@@ -913,7 +915,7 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                     global_chunk_counter += 1
                     continue
 
-                # synthesize_chunk_safe retries indefinitely so that no chunks will be skipped
+                # synthesize_chunk_safe retries so that no chunks will be skipped
                 started = time.monotonic()
                 retries = await synthesize_chunk_safe(chunk, chunk_mp3_path, voice)
                 await asyncio.sleep(0.5)
@@ -925,12 +927,11 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                 local_chunk_counter += 1
                 global_chunk_counter += 1
 
-            # Add an audio marker for end of chapter, announcing the number and
-            # (if available) the title of the next chapter.
+            # Add an audio marker for end of chapter, announcing the heading of
+            # the next chapter (or that it has none) and its estimated duration.
             marker_mp3_path = os.path.join(output_dir, f"{base_name}_chunk_{global_chunk_counter}.mp3")
 
             if chapter_index < len(chapters):
-                next_chapter = chapters[chapter_index]
                 # Count the words of the cleaned chunks, i.e. exactly what will be
                 # spoken, matching how the measured rate is counted
                 word_count = sum(len(text_chunk.split()) for text_chunk in chapter_chunks[chapter_index])
@@ -942,35 +943,33 @@ def chapters_to_mp3(language, voice, marker_voice, chapters, base_name, metadata
                 # Gray text
                 rate_source = "measured" if is_measured else "default"
                 print(f"\033[37m{progress.prefix()}         Next chapter: {word_count} words, about {estimated_minutes} min at {words_per_minute:.0f} words/min ({rate_source})\033[0m")
-                next_number = display_number + 1
-                next_title = chapter_title(next_chapter, language)
-
                 if language.lower() == "de":
-                    this_part = "Ende der Einleitung" if display_number == 0 else f"Ende des Kapitels {display_number}"
-                    up_next = f"Als Nächstes: Kapitel {next_number}" + (f", {next_title}" if next_title else "")
-                    marker_text = f"{this_part}. {up_next}. Das nächste Kapitel dauert etwa {duration_str}."
+                    this_part = "Ende der Einleitung" if chapter_index == 1 else (
+                        f"Ende von {label}" if label else "Ende des Kapitels")
+                    marker_text = f"{this_part}. Das nächste Kapitel dauert etwa {duration_str}."
                 else:
-                    this_part = "End of the introduction" if display_number == 0 else f"End of chapter {display_number}"
-                    up_next = f"Up next: chapter {next_number}" + (f", {next_title}" if next_title else "")
-                    marker_text = f"{this_part}. {up_next}. The next chapter will take about {duration_str}."
+                    this_part = "End of the introduction" if chapter_index == 1 else (
+                        f"End of {label}" if label else "End of the chapter")
+                    marker_text = f"{this_part}. The next chapter will take about {duration_str}."
             else:
                 if language.lower() == "de":
-                    marker_text = "Ende der Einleitung" if display_number == 0 else f"Ende des Kapitels {display_number}"
+                    marker_text = "Ende der Einleitung" if chapter_index == 1 else (
+                        f"Ende von {label}" if label else "Ende des Kapitels")
                 else:
-                    marker_text = "End of the introduction" if display_number == 0 else f"End of chapter {display_number}"
+                    marker_text = "End of the introduction" if chapter_index == 1 else (
+                        f"End of {label}" if label else "End of the chapter")
 
-            # Markers also retry indefinitely
             if os.path.exists(marker_mp3_path):
                 progress.record_reused()
                 # Bright blue text
-                print(f"\033[94m{progress.prefix()}         Reused chapter {display_number} end marker as chunk {global_chunk_counter}\033[0m")
+                print(f"\033[94m{progress.prefix()}         Reused {part_label} end marker as chunk {global_chunk_counter}\033[0m")
             else:
                 started = time.monotonic()
                 retries = await synthesize_chunk_safe(marker_text, marker_mp3_path, marker_voice)
                 progress.record_synthesized(time.monotonic() - started, retries)
 
                 # Bright green text
-                print(f"\033[92m{progress.prefix()}         Saved chapter {display_number} end marker as chunk {global_chunk_counter}\033[0m")
+                print(f"\033[92m{progress.prefix()}         Saved {part_label} end marker as chunk {global_chunk_counter}\033[0m")
 
             chapter_end_chunk_indices.append(global_chunk_counter)
             global_chunk_counter += 1
@@ -1084,7 +1083,7 @@ def main():
     """
     parser = argparse.ArgumentParser(description="Convert EPUB to TTS audio")
     parser.add_argument("epub_path", help="Path to the EPUB file")
-    parser.add_argument("language", type=str.lower,choices=["de", "en"], metavar="{de,en}", help="Language code of the book")
+    parser.add_argument("language", type=str.lower, choices=["de", "en"], metavar="{de,en}", help="Language code of the book")
     parser.add_argument("voice", nargs="?", default=None,
                         help="Edge-TTS voice for main narration (optional, default depends on language: "
                              + ", ".join(f"{lang}={profile['voice']}" for lang, profile in _DEFAULT_VOICE_PROFILES.items())
@@ -1118,13 +1117,13 @@ def main():
         print(f"\033[31mNo chapters found or error reading EPUB. Aborting.\033[0m")
         return
 
-    # Add version of script as first chapter
+    # Add version of script as first chapter (no heading, so no title)
     if language == "de":
         version_intro = f"Version {spoken_version(language)} der Earwyrm Pipeline. Generiert mit der Stimme {args.voice} und der Markierungsstimme {args.marker_voice}."
     else:
         version_intro = f"Version {spoken_version(language)} of the Earwyrm Pipeline. Generated with voice {args.voice} and marker voice {args.marker_voice}."
 
-    chapters.insert(0, version_intro)
+    chapters.insert(0, (None, version_intro))
 
     metadata, cover_item = epub_metadata_for_mp3(args.epub_path, language)
 

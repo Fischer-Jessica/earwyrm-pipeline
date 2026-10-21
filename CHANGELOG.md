@@ -3,6 +3,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.5] - 21-10-2026
+### Added
+- abort after 5 repeated `403` errors during the WebSocket handshake, with a hint to update `edge-tts` instead of retrying indefinitely; already synthesized chunks are preserved so the next run can resume
+
+### Changed
+- chapter start markers now speak the chapter heading as it appears in the EPUB instead of a running chapter number
+- chapters without a heading no longer use the first line of their text as a title; they receive no start marker, and their end markers use "End of the chapter" / "Ende des Kapitels"
+- chapter end markers no longer announce the next chapter's title, but still announce its estimated duration
+- `epub_to_chapters()` now returns the heading separately from the text, preventing the heading from being narrated a second time after the start marker
+- marker text changes affect chunk numbering, so temporary chunk files from an earlier version must be cleared from `./output/` before the first run with 3.3.5
+
 ## [3.3.4] - 21-10-2026
 ### Fixed
 - synthesis failing with `403, message='Invalid response status'` during the WebSocket handshake to the Edge TTS endpoint, by updating `edge-tts` from 7.2.7 to 7.3.1
