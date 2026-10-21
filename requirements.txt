@@ -1,8 +1,8 @@
-aiohttp==3.13.3
+aiohttp>=3.13.3
 audioop-lts==0.2.2; python_version >= "3.13"
 beautifulsoup4==4.14.3
 EbookLib==0.20
-edge-tts==7.2.7
+edge-tts>=7.3.1
 lxml==6.0.2
 Pillow==12.3.0
 pydub==0.25.1

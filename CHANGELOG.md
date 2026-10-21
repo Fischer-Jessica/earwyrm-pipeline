@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.4] - 21-10-2026
+### Fixed
+- synthesis failing with `403, message='Invalid response status'` during the WebSocket handshake to the Edge TTS endpoint, by updating `edge-tts` from 7.2.7 to 7.3.1
+
 ## [3.3.3] - 07-10-2026
 ### Added
 - default voice profile per language (German: `de-DE-SeraphinaMultilingualNeural` / `de-DE-ConradNeural`, English: `en-GB-RyanNeural` / `en-GB-SoniaNeural`), defined in `_DEFAULT_VOICE_PROFILES`
